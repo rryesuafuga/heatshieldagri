@@ -122,12 +122,30 @@ export class HeatShieldML {
   private sessions: Record<string, import('onnxruntime-web').InferenceSession> = {};
   private _isLoaded = false;
   private _ort: OrtRuntime | null = null;
+  private _loadPromise: Promise<void> | null = null;
 
   constructor(private modelBasePath = '/models') {}
 
   get isLoaded() { return this._isLoaded; }
 
   async loadModels(
+    onProgress?: (loaded: number, total: number, name: string) => void,
+  ): Promise<void> {
+    // If already loaded, nothing to do
+    if (this._isLoaded) {
+      onProgress?.(3, 3, 'done');
+      return;
+    }
+    // If a load is already in flight, return the existing promise
+    // to prevent the ONNX WASM backend from being initialized twice
+    // (which causes "Session already started").
+    if (this._loadPromise) return this._loadPromise;
+
+    this._loadPromise = this._doLoad(onProgress);
+    return this._loadPromise;
+  }
+
+  private async _doLoad(
     onProgress?: (loaded: number, total: number, name: string) => void,
   ): Promise<void> {
     // Dynamically import onnxruntime-web so a WASM init failure

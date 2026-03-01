@@ -42,6 +42,17 @@ interface UseHeatShieldMLReturn {
   modelSizeKB: number;
 }
 
+// Module-level singleton — survives React StrictMode double-mount and
+// prevents the ONNX WASM backend from being initialized twice.
+let singletonML: HeatShieldML | null = null;
+
+function getMLInstance(modelPath: string): HeatShieldML {
+  if (!singletonML) {
+    singletonML = new HeatShieldML(modelPath);
+  }
+  return singletonML;
+}
+
 export function useHeatShieldML(modelPath = '/models'): UseHeatShieldMLReturn {
   const mlRef = useRef<HeatShieldML | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -51,8 +62,15 @@ export function useHeatShieldML(modelPath = '/models'): UseHeatShieldMLReturn {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    const ml = new HeatShieldML(modelPath);
+    const ml = getMLInstance(modelPath);
     mlRef.current = ml;
+
+    // If already loaded (e.g. StrictMode re-mount), skip straight to ready
+    if (ml.isLoaded) {
+      setIsLoading(false);
+      setIsReady(true);
+      return;
+    }
 
     ml.loadModels((loaded, total, name) => {
       setLoadProgress(Math.round((loaded / total) * 100));
@@ -69,9 +87,7 @@ export function useHeatShieldML(modelPath = '/models'): UseHeatShieldMLReturn {
         console.error('[HeatShieldML] Load error:', err);
       });
 
-    return () => {
-      ml.dispose();
-    };
+    // Do NOT dispose the singleton on cleanup — it must survive re-mounts
   }, [modelPath]);
 
   const predictWBGT = useCallback(
