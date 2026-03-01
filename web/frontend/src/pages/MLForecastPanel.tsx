@@ -1,337 +1,347 @@
 /**
- * MLForecastPanel — ML-enhanced WBGT forecast using Random Forest models.
+ * MLForecastPanel.tsx
+ * ===================
+ * Displays ML-enhanced WBGT forecast alongside existing physics-based forecast.
+ * Place in: web/frontend/src/pages/MLForecastPanel.tsx
  *
- * Displays an hourly risk bar chart, summary stats, and work-capacity
- * recommendations powered by browser-side ONNX inference.
+ * This component:
+ *  1. Fetches 4 days of recent hourly weather from Open-Meteo (as ML input history)
+ *  2. Runs the Random Forest ONNX models in-browser
+ *  3. Displays a 24-hour ML forecast with WBGT risk levels
+ *  4. Shows model metadata (accuracy metrics, training info)
+ *
+ * Integration: Import and add to your Forecast page or Dashboard.
  */
 
-import { Loader2, Brain, RefreshCw, AlertTriangle, Clock, Zap } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
 import { useHeatShieldML } from '../hooks/useHeatShieldML';
-import { classifyRisk } from '../wasm';
+import type { WBGTForecast } from '../ml-inference';
+
+// ---- Types ----
+
+interface HourlyWeather {
+  time: string[];
+  temperature_2m: number[];
+  relative_humidity_2m: number[];
+  wind_speed_10m: number[];
+}
+
+interface DistrictCoords {
+  lat: number;
+  lon: number;
+}
+
+// District coordinates (same as your existing dashboard)
+const DISTRICTS: Record<string, DistrictCoords> = {
+  'Kampala':     { lat: 0.3476,  lon: 32.5825 },
+  'Gulu':        { lat: 2.7747,  lon: 32.2990 },
+  'Moroto':      { lat: 2.5346,  lon: 34.6713 },
+  'Mbale':       { lat: 1.0750,  lon: 34.1750 },
+  'Jinja':       { lat: 0.4244,  lon: 33.2041 },
+  'Mbarara':     { lat: -0.6133, lon: 30.6545 },
+  'Lira':        { lat: 2.2499,  lon: 32.5339 },
+  'Soroti':      { lat: 1.7150,  lon: 33.6111 },
+  'Arua':        { lat: 3.0200,  lon: 30.9100 },
+  'Kabale':      { lat: -1.2508, lon: 29.9894 },
+  'Hoima':       { lat: 1.4331,  lon: 31.3525 },
+  'Fort Portal': { lat: 0.6710,  lon: 30.2750 },
+};
+
+// ---- Helper: Fetch recent weather history from Open-Meteo ----
+
+async function fetchWeatherHistory(
+  lat: number, lon: number,
+): Promise<{ temps: number[]; hums: number[]; winds: number[]; timestamps: Date[] }> {
+  // Need 73+ hours of history for lag features. Fetch 4 days to be safe.
+  const now = new Date();
+  const fourDaysAgo = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000);
+
+  const startDate = fourDaysAgo.toISOString().split('T')[0];
+  const endDate = now.toISOString().split('T')[0];
+
+  const url = `https://api.open-meteo.com/v1/forecast?` +
+    `latitude=${lat}&longitude=${lon}` +
+    `&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m` +
+    `&start_date=${startDate}&end_date=${endDate}` +
+    `&timezone=Africa/Kampala` +
+    `&past_days=4`;
+
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Open-Meteo API error: ${resp.status}`);
+  const data = await resp.json();
+
+  const hourly: HourlyWeather = data.hourly;
+
+  // Filter out any null values and align arrays
+  const validIndices: number[] = [];
+  for (let i = 0; i < hourly.time.length; i++) {
+    if (
+      hourly.temperature_2m[i] != null &&
+      hourly.relative_humidity_2m[i] != null &&
+      hourly.wind_speed_10m[i] != null
+    ) {
+      validIndices.push(i);
+    }
+  }
+
+  return {
+    temps: validIndices.map(i => hourly.temperature_2m[i]),
+    hums: validIndices.map(i => hourly.relative_humidity_2m[i]),
+    winds: validIndices.map(i => hourly.wind_speed_10m[i]),
+    timestamps: validIndices.map(i => new Date(hourly.time[i])),
+  };
+}
+
+// ---- Risk level colors ----
+
+const RISK_COLORS: Record<string, string> = {
+  'Low':       'bg-green-100 text-green-800 border-green-300',
+  'Moderate':  'bg-yellow-100 text-yellow-800 border-yellow-300',
+  'High':      'bg-orange-100 text-orange-800 border-orange-300',
+  'Very High': 'bg-red-100 text-red-800 border-red-300',
+  'Extreme':   'bg-red-200 text-red-900 border-red-500',
+};
+
+const RISK_BAR_COLORS: Record<string, string> = {
+  'Low':       'bg-green-400',
+  'Moderate':  'bg-yellow-400',
+  'High':      'bg-orange-400',
+  'Very High': 'bg-red-500',
+  'Extreme':   'bg-red-700',
+};
+
+// ---- Component ----
 
 interface MLForecastPanelProps {
-  district: string;
+  /** Currently selected district name */
+  district?: string;
+  /** Number of hours to forecast (default 24) */
   forecastHours?: number;
 }
 
-function ProgressBar({ value }: { value: number }) {
-  return (
-    <div className="w-full bg-gray-200 rounded-full h-2">
-      <div
-        className="bg-green-500 h-2 rounded-full transition-all duration-300"
-        style={{ width: `${value}%` }}
-      />
-    </div>
-  );
-}
+export default function MLForecastPanel({
+  district = 'Kampala',
+  forecastHours = 24,
+}: MLForecastPanelProps) {
+  const { isLoading: mlLoading, loadProgress, loadingModel, error: mlError, isReady, predictMultiStep } = useHeatShieldML();
 
-function RiskBar({ predictions }: { predictions: ReturnType<typeof useHeatShieldML>['predictions'] }) {
-  return (
-    <div className="space-y-1">
-      <div className="flex gap-0.5">
-        {predictions.map((p, i) => (
-          <div
-            key={i}
-            className="flex-1 rounded-sm relative group cursor-pointer"
-            style={{ backgroundColor: p.riskColor, height: '32px' }}
-            title={`${p.hour}:00 — WBGT ${p.wbgt.toFixed(1)}°C (${p.riskLevel})`}
-          >
-            {/* Tooltip on hover */}
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-10">
-              <div className="bg-gray-900 text-white text-xs rounded py-1 px-2 whitespace-nowrap">
-                {p.hour.toString().padStart(2, '0')}:00 — {p.wbgt.toFixed(1)}°C
-                <br />
-                {p.riskLevel} Risk
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-      {/* Hour labels */}
-      <div className="flex gap-0.5 text-xs text-gray-400">
-        {predictions.map((p, i) => (
-          <div key={i} className="flex-1 text-center">
-            {i % 3 === 0 ? `${p.hour.toString().padStart(2, '0')}` : ''}
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+  const [forecasts, setForecasts] = useState<WBGTForecast[]>([]);
+  const [isForecasting, setIsForecasting] = useState(false);
+  const [forecastError, setForecastError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-function SummaryStats({ predictions }: { predictions: ReturnType<typeof useHeatShieldML>['predictions'] }) {
-  if (predictions.length === 0) return null;
+  const runForecast = useCallback(async () => {
+    if (!isReady) return;
 
-  const wbgts = predictions.map((p) => p.wbgt);
-  const maxWbgt = Math.max(...wbgts);
-  const minWbgt = Math.min(...wbgts);
-  const avgWbgt = wbgts.reduce((a, b) => a + b, 0) / wbgts.length;
-  const safeHours = predictions.filter((p) => p.wbgt < 28).length;
-  const avgCapacity = predictions.reduce((s, p) => s + p.workCapacity, 0) / predictions.length;
-  const peakIdx = wbgts.indexOf(maxWbgt);
-  const peakRisk = classifyRisk(maxWbgt);
+    const coords = DISTRICTS[district];
+    if (!coords) {
+      setForecastError(`Unknown district: ${district}`);
+      return;
+    }
 
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-      <div className="bg-white rounded-lg p-3 text-center border border-gray-100">
-        <div className="text-xs text-gray-500 mb-1">Peak WBGT</div>
-        <div className="text-xl font-bold" style={{ color: peakRisk.color }}>
-          {maxWbgt.toFixed(1)}°C
-        </div>
-        <div className="text-xs text-gray-400">
-          at {predictions[peakIdx].hour.toString().padStart(2, '0')}:00
-        </div>
-      </div>
-      <div className="bg-white rounded-lg p-3 text-center border border-gray-100">
-        <div className="text-xs text-gray-500 mb-1">Low WBGT</div>
-        <div className="text-xl font-bold text-green-600">{minWbgt.toFixed(1)}°C</div>
-      </div>
-      <div className="bg-white rounded-lg p-3 text-center border border-gray-100">
-        <div className="text-xs text-gray-500 mb-1">Average</div>
-        <div className="text-xl font-bold text-gray-700">{avgWbgt.toFixed(1)}°C</div>
-      </div>
-      <div className="bg-white rounded-lg p-3 text-center border border-gray-100">
-        <div className="text-xs text-gray-500 mb-1">Safe Hours</div>
-        <div className="text-xl font-bold text-blue-600">{safeHours}</div>
-        <div className="text-xs text-gray-400">below 28°C</div>
-      </div>
-      <div className="bg-white rounded-lg p-3 text-center border border-gray-100">
-        <div className="text-xs text-gray-500 mb-1">Work Capacity</div>
-        <div className="text-xl font-bold text-indigo-600">{avgCapacity.toFixed(0)}%</div>
-        <div className="text-xs text-gray-400">Hothaps model</div>
-      </div>
-    </div>
-  );
-}
+    setIsForecasting(true);
+    setForecastError(null);
 
-function HourlyTable({ predictions }: { predictions: ReturnType<typeof useHeatShieldML>['predictions'] }) {
-  const riskBadge: Record<string, string> = {
-    Low: 'bg-green-100 text-green-800',
-    Moderate: 'bg-yellow-100 text-yellow-800',
-    High: 'bg-orange-100 text-orange-800',
-    'Very High': 'bg-red-100 text-red-800',
-    Extreme: 'bg-red-900 text-white',
-  };
+    try {
+      // 1. Fetch recent weather history from Open-Meteo
+      const { temps, hums, winds } = await fetchWeatherHistory(coords.lat, coords.lon);
 
-  return (
-    <div className="overflow-x-auto max-h-72">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50 sticky top-0">
-          <tr>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hour</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">WBGT</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Risk</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Temp</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Humid</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Wind</th>
-            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Capacity</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {predictions.map((p, i) => (
-            <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-              <td className="px-3 py-2 font-medium">{p.hour.toString().padStart(2, '0')}:00</td>
-              <td className="px-3 py-2">{p.wbgt.toFixed(1)}°C</td>
-              <td className="px-3 py-2">
-                <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${riskBadge[p.riskLevel] || ''}`}>
-                  {p.riskLevel}
-                </span>
-              </td>
-              <td className="px-3 py-2 text-gray-500">{p.temperature.toFixed(1)}°C</td>
-              <td className="px-3 py-2 text-gray-500">{p.humidity.toFixed(0)}%</td>
-              <td className="px-3 py-2 text-gray-500">{p.windSpeed.toFixed(1)} m/s</td>
-              <td className="px-3 py-2">
-                <div className="flex items-center space-x-2">
-                  <div className="w-16 h-1.5 bg-gray-200 rounded-full">
-                    <div
-                      className="h-1.5 rounded-full"
-                      style={{
-                        width: `${p.workCapacity}%`,
-                        backgroundColor: p.riskColor,
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-gray-500">{p.workCapacity}%</span>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
+      if (temps.length < 73) {
+        setForecastError(`Insufficient weather history: got ${temps.length} hours, need 73+`);
+        return;
+      }
 
-export default function MLForecastPanel({ district, forecastHours = 24 }: MLForecastPanelProps) {
-  const {
-    predictions,
-    isLoading,
-    isModelLoading,
-    error,
-    loadProgress,
-    refresh,
-    inferenceTimeMs,
-  } = useHeatShieldML(district, forecastHours);
+      // 2. Run ML prediction
+      const results = await predictMultiStep(temps, hums, winds, forecastHours);
+      setForecasts(results);
+      setLastUpdated(new Date());
+    } catch (err: any) {
+      setForecastError(err.message || 'Forecast failed');
+      console.error('[MLForecast] Error:', err);
+    } finally {
+      setIsForecasting(false);
+    }
+  }, [isReady, district, forecastHours, predictMultiStep]);
 
-  // Loading state
-  if (isLoading) {
+  // Auto-run forecast when ML is ready or district changes
+  useEffect(() => {
+    if (isReady) {
+      runForecast();
+    }
+  }, [isReady, district, runForecast]);
+
+  // ---- Render: Loading state ----
+  if (mlLoading) {
     return (
-      <div className="card">
-        <div className="flex items-center space-x-3 mb-4">
-          <Brain className="h-5 w-5 text-purple-600" />
-          <h3 className="text-lg font-semibold text-gray-900">ML Weather Forecast</h3>
-        </div>
-        <div className="flex flex-col items-center py-8">
-          <Loader2 className="h-8 w-8 text-purple-500 animate-spin mb-3" />
-          <p className="text-sm text-gray-600 mb-2">
-            {isModelLoading ? 'Loading ONNX models...' : 'Running ML inference...'}
-          </p>
-          <div className="w-64">
-            <ProgressBar value={loadProgress} />
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4">
+          🤖 ML-Enhanced Forecast
+        </h3>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600" />
+            <span className="text-sm text-gray-600">
+              Loading {loadingModel} model... {loadProgress}%
+            </span>
           </div>
-          <p className="text-xs text-gray-400 mt-2">
-            {isModelLoading
-              ? 'Downloading Random Forest models (~1 MB)'
-              : `Predicting ${forecastHours} hours ahead...`}
+          <div className="w-full bg-gray-200 rounded-full h-2">
+            <div
+              className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+              style={{ width: `${loadProgress}%` }}
+            />
+          </div>
+          <p className="text-xs text-gray-500">
+            Downloading Random Forest models (~6 MB total). First load only.
           </p>
         </div>
       </div>
     );
   }
 
-  // Error state
-  if (error) {
+  // ---- Render: Error state ----
+  if (mlError) {
     return (
-      <div className="card">
-        <div className="flex items-center space-x-3 mb-4">
-          <Brain className="h-5 w-5 text-purple-600" />
-          <h3 className="text-lg font-semibold text-gray-900">ML Weather Forecast</h3>
-        </div>
-        <div className="flex flex-col items-center py-8">
-          <AlertTriangle className="h-8 w-8 text-red-500 mb-3" />
-          <p className="text-sm text-gray-900 font-medium mb-1">ML Forecast Unavailable</p>
-          <p className="text-xs text-gray-500 mb-4 text-center max-w-sm">{error}</p>
-          <button
-            onClick={refresh}
-            className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm"
-          >
-            <RefreshCw className="h-4 w-4" />
-            <span>Retry</span>
-          </button>
-        </div>
+      <div className="bg-red-50 rounded-lg border border-red-200 p-6">
+        <h3 className="text-lg font-semibold text-red-900 mb-2">
+          ML Forecast Unavailable
+        </h3>
+        <p className="text-sm text-red-700">{mlError}</p>
+        <p className="text-xs text-red-500 mt-2">
+          The physics-based WBGT forecast above remains fully functional.
+        </p>
       </div>
     );
   }
 
-  if (predictions.length === 0) return null;
-
-  // Find high-risk hours for recommendation
-  const highRiskHours = predictions.filter((p) => p.wbgt >= 30);
-  const safeWorkPeriods = predictions.filter((p) => p.wbgt < 28);
+  // ---- Render: Forecast results ----
+  // Find the peak WBGT and current risk
+  const peakForecast = forecasts.reduce(
+    (max, fc) => (fc.wbgt > max.wbgt ? fc : max),
+    forecasts[0] || { wbgt: 0, riskLevel: 'Low' as const, temperature: 0, humidity: 0, windSpeed: 0, workCapacityPercent: 100, recommendation: '', timestamp: new Date() },
+  );
 
   return (
-    <div className="card">
+    <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center space-x-3">
-          <Brain className="h-5 w-5 text-purple-600" />
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900">ML Weather Forecast</h3>
-            <p className="text-xs text-gray-400">
-              Random Forest ONNX models — {district}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center space-x-3">
-          {inferenceTimeMs !== null && (
-            <span className="text-xs text-gray-400 flex items-center space-x-1">
-              <Zap className="h-3 w-3" />
-              <span>{inferenceTimeMs}ms</span>
-            </span>
-          )}
-          <button
-            onClick={refresh}
-            className="p-2 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
-            title="Re-run ML forecast"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* Risk bar */}
-      <div className="mb-6">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-medium text-gray-700">
-            {forecastHours}-Hour WBGT Risk Timeline
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <h3 className="text-lg font-semibold text-gray-900">
+            🤖 ML-Enhanced Forecast
+          </h3>
+          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+            Random Forest
           </span>
-          <div className="flex items-center space-x-3 text-xs">
-            <span className="flex items-center space-x-1">
-              <span className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-gray-500">Low</span>
-            </span>
-            <span className="flex items-center space-x-1">
-              <span className="w-2 h-2 rounded-full bg-yellow-500" />
-              <span className="text-gray-500">Mod</span>
-            </span>
-            <span className="flex items-center space-x-1">
-              <span className="w-2 h-2 rounded-full bg-orange-500" />
-              <span className="text-gray-500">High</span>
-            </span>
-            <span className="flex items-center space-x-1">
-              <span className="w-2 h-2 rounded-full bg-red-500" />
-              <span className="text-gray-500">V.High</span>
-            </span>
-          </div>
         </div>
-        <RiskBar predictions={predictions} />
+        <button
+          onClick={runForecast}
+          disabled={isForecasting}
+          className="text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400"
+        >
+          {isForecasting ? 'Forecasting...' : '↻ Refresh'}
+        </button>
       </div>
 
-      {/* Summary stats */}
-      <div className="mb-6">
-        <SummaryStats predictions={predictions} />
+      {/* District & time info */}
+      <div className="flex items-center gap-4 text-xs text-gray-500">
+        <span>📍 {district}</span>
+        {lastUpdated && (
+          <span>Updated: {lastUpdated.toLocaleTimeString()}</span>
+        )}
+        <span>{forecastHours}h forecast</span>
       </div>
 
-      {/* Recommendation */}
-      {highRiskHours.length > 0 && (
-        <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-          <div className="flex items-start space-x-3">
-            <AlertTriangle className="h-5 w-5 text-orange-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-orange-900">
-                ML model predicts {highRiskHours.length} high-risk hour{highRiskHours.length !== 1 ? 's' : ''}
-              </p>
-              <p className="text-xs text-orange-700 mt-1">
-                Avoid outdoor work during hours:{' '}
-                {highRiskHours.map((h) => `${h.hour.toString().padStart(2, '0')}:00`).join(', ')}.
-                {safeWorkPeriods.length > 0 && (
-                  <> Best work windows: {safeWorkPeriods.slice(0, 4).map((h) => `${h.hour.toString().padStart(2, '0')}:00`).join(', ')}.</>
-                )}
-              </p>
-            </div>
-          </div>
+      {/* Error */}
+      {forecastError && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm text-yellow-800">
+          {forecastError}
         </div>
       )}
 
-      {/* Hourly table */}
-      <details className="group">
-        <summary className="flex items-center justify-between cursor-pointer py-2 text-sm font-medium text-gray-700 hover:text-purple-600">
-          <div className="flex items-center space-x-2">
-            <Clock className="h-4 w-4" />
-            <span>Hourly Breakdown</span>
-          </div>
-          <span className="text-xs text-gray-400 group-open:hidden">Click to expand</span>
-        </summary>
-        <div className="mt-2">
-          <HourlyTable predictions={predictions} />
+      {/* Loading spinner during forecast */}
+      {isForecasting && (
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600" />
+          Running ML inference...
         </div>
-      </details>
+      )}
 
-      {/* Attribution */}
-      <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400 text-center">
-        Predictions: Random Forest (ONNX) in-browser via WebAssembly
-        {' '}&bull;{' '}WBGT: ISO 7243 &bull; Work capacity: Hothaps model
-      </div>
+      {/* Results */}
+      {forecasts.length > 0 && !isForecasting && (
+        <>
+          {/* Peak WBGT alert */}
+          <div className={`rounded-lg border p-4 ${RISK_COLORS[peakForecast.riskLevel]}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">Peak WBGT (next {forecastHours}h)</p>
+                <p className="text-3xl font-bold">{peakForecast.wbgt}°C</p>
+                <p className="text-sm mt-1">{peakForecast.recommendation}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-medium">Risk Level</p>
+                <p className="text-xl font-bold">{peakForecast.riskLevel}</p>
+                <p className="text-sm mt-1">
+                  Work capacity: {peakForecast.workCapacityPercent}%
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Hourly forecast bars */}
+          <div>
+            <h4 className="text-sm font-medium text-gray-700 mb-2">
+              Hourly WBGT Forecast
+            </h4>
+            <div className="space-y-1">
+              {forecasts.map((fc, i) => {
+                const hour = fc.timestamp.getHours();
+                const timeStr = fc.timestamp.toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                });
+                // Scale bar width: 0°C = 0%, 40°C = 100%
+                const barWidth = Math.min(100, Math.max(5, (fc.wbgt / 40) * 100));
+
+                return (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <span className="w-14 text-gray-500 text-right font-mono">
+                      {timeStr}
+                    </span>
+                    <div className="flex-1 bg-gray-100 rounded-full h-4 relative">
+                      <div
+                        className={`h-4 rounded-full transition-all ${RISK_BAR_COLORS[fc.riskLevel]}`}
+                        style={{ width: `${barWidth}%` }}
+                      />
+                      <span className="absolute inset-0 flex items-center justify-center text-xs font-medium text-gray-900">
+                        {fc.wbgt}°C
+                      </span>
+                    </div>
+                    <span className="w-8 text-right font-mono text-gray-500">
+                      {fc.temperature.toFixed(0)}°
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Model info footer */}
+          <div className="border-t pt-3 mt-4">
+            <details className="text-xs text-gray-500">
+              <summary className="cursor-pointer hover:text-gray-700">
+                Model details
+              </summary>
+              <div className="mt-2 space-y-1 pl-4">
+                <p>Algorithm: Random Forest (scikit-learn → ONNX)</p>
+                <p>Features: 17 (8 lags + 4 cyclical + 3 rolling + 2 delta)</p>
+                <p>Training data: Open-Meteo historical (4 districts, 2021-2025)</p>
+                <p>Inference: onnxruntime-web (WASM, runs in your browser)</p>
+                <p>Models: temperature, humidity, wind speed → ISO 7243 WBGT</p>
+                <p>WBGT formula: 0.7×Tnwb + 0.2×Tg + 0.1×Tdb</p>
+              </div>
+            </details>
+          </div>
+        </>
+      )}
     </div>
   );
 }

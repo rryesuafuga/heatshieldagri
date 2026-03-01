@@ -1,57 +1,234 @@
 {
-  "models": {
-    "temperature": {
-      "file": "temperature_model.onnx",
-      "type": "RandomForestRegressor",
-      "n_estimators": 20,
-      "max_depth": 8,
-      "output_unit": "celsius"
+  "generated_at": "2026-03-01T18:37:31.378914",
+  "generated_in": "Google Colab",
+  "training_districts": [
+    "Kampala",
+    "Moroto",
+    "Kabale",
+    "Gulu"
+  ],
+  "all_districts": [
+    "Kampala",
+    "Gulu",
+    "Moroto",
+    "Mbale",
+    "Jinja",
+    "Mbarara",
+    "Lira",
+    "Soroti",
+    "Arua",
+    "Kabale",
+    "Hoima",
+    "Fort Portal"
+  ],
+  "district_coordinates": {
+    "Kampala": {
+      "lat": 0.3476,
+      "lon": 32.5825
     },
-    "humidity": {
-      "file": "humidity_model.onnx",
-      "type": "RandomForestRegressor",
-      "n_estimators": 20,
-      "max_depth": 8,
-      "output_unit": "percent"
+    "Gulu": {
+      "lat": 2.7747,
+      "lon": 32.299
     },
-    "windspeed": {
-      "file": "windspeed_model.onnx",
-      "type": "RandomForestRegressor",
-      "n_estimators": 20,
-      "max_depth": 8,
-      "output_unit": "m/s"
+    "Moroto": {
+      "lat": 2.5346,
+      "lon": 34.6713
+    },
+    "Mbale": {
+      "lat": 1.075,
+      "lon": 34.175
+    },
+    "Jinja": {
+      "lat": 0.4244,
+      "lon": 33.2041
+    },
+    "Mbarara": {
+      "lat": -0.6133,
+      "lon": 30.6545
+    },
+    "Lira": {
+      "lat": 2.2499,
+      "lon": 32.5339
+    },
+    "Soroti": {
+      "lat": 1.715,
+      "lon": 33.6111
+    },
+    "Arua": {
+      "lat": 3.02,
+      "lon": 30.91
+    },
+    "Kabale": {
+      "lat": -1.2508,
+      "lon": 29.9894
+    },
+    "Hoima": {
+      "lat": 1.4331,
+      "lon": 31.3525
+    },
+    "Fort Portal": {
+      "lat": 0.671,
+      "lon": 30.275
     }
   },
-  "features": [
-    "temp_lag1",
-    "temp_lag2",
-    "temp_lag3",
-    "humid_lag1",
-    "humid_lag2",
-    "humid_lag3",
-    "wind_lag1",
-    "wind_lag2",
-    "hour_sin",
-    "hour_cos",
-    "month_sin",
-    "month_cos",
-    "temp_rolling_mean_6h",
-    "humid_rolling_mean_6h",
-    "wind_rolling_mean_6h",
-    "temp_delta_1h",
-    "humid_delta_1h"
-  ],
-  "feature_count": 17,
-  "training": {
-    "districts": [
-      "Kampala",
-      "Gulu",
-      "Moroto",
-      "Mbale"
-    ],
-    "years": 5,
-    "total_samples": 175176,
-    "source": "Open-Meteo historical weather data"
+  "date_range": {
+    "start": "2021-01-01",
+    "end": "2025-12-31"
   },
-  "version": "1.0.0"
+  "data_source": "Open-Meteo Historical API (archive-api.open-meteo.com)",
+  "data_type": "Real observed weather data (NOT synthetic)",
+  "lags": [
+    1,
+    2,
+    3,
+    6,
+    12,
+    24,
+    48,
+    72
+  ],
+  "forecast_horizon_hours": 72,
+  "model_config": {
+    "algorithm": "RandomForestRegressor",
+    "n_estimators": 30,
+    "max_depth": 10,
+    "min_samples_leaf": 10,
+    "random_state": 42
+  },
+  "feature_engineering": {
+    "total_features": 17,
+    "lag_features": [
+      "lag_1",
+      "lag_2",
+      "lag_3",
+      "lag_6",
+      "lag_12",
+      "lag_24",
+      "lag_48",
+      "lag_72"
+    ],
+    "cyclical_features": [
+      "hour_sin",
+      "hour_cos",
+      "doy_sin",
+      "doy_cos"
+    ],
+    "rolling_features": [
+      "rolling_mean_24h",
+      "rolling_mean_72h",
+      "rolling_std_24h"
+    ],
+    "delta_features": [
+      "delta_1h",
+      "delta_24h"
+    ]
+  },
+  "wbgt_thresholds": {
+    "low": 26.0,
+    "moderate": 28.0,
+    "high": 30.0,
+    "very_high": 32.0
+  },
+  "iso_7243_formula": "WBGT = 0.7 * Tnwb + 0.2 * Tg + 0.1 * Tdb",
+  "models": {
+    "temperature": {
+      "onnx_file": "temperature_model.onnx",
+      "onnx_size_kb": 2087.9,
+      "feature_names": [
+        "lag_1",
+        "lag_2",
+        "lag_3",
+        "lag_6",
+        "lag_12",
+        "lag_24",
+        "lag_48",
+        "lag_72",
+        "hour_sin",
+        "hour_cos",
+        "doy_sin",
+        "doy_cos",
+        "rolling_mean_24h",
+        "rolling_mean_72h",
+        "rolling_std_24h",
+        "delta_1h",
+        "delta_24h"
+      ],
+      "n_features": 17,
+      "metrics": {
+        "mae": 0.5002,
+        "rmse": 0.7273,
+        "r2": 0.9751,
+        "oob_score": 0.9677
+      },
+      "train_samples": 172344,
+      "test_samples": 2879,
+      "train_time_seconds": 61.8
+    },
+    "humidity": {
+      "onnx_file": "humidity_model.onnx",
+      "onnx_size_kb": 2106.7,
+      "feature_names": [
+        "lag_1",
+        "lag_2",
+        "lag_3",
+        "lag_6",
+        "lag_12",
+        "lag_24",
+        "lag_48",
+        "lag_72",
+        "hour_sin",
+        "hour_cos",
+        "doy_sin",
+        "doy_cos",
+        "rolling_mean_24h",
+        "rolling_mean_72h",
+        "rolling_std_24h",
+        "delta_1h",
+        "delta_24h"
+      ],
+      "n_features": 17,
+      "metrics": {
+        "mae": 2.9243,
+        "rmse": 4.5059,
+        "r2": 0.9528,
+        "oob_score": 0.9549
+      },
+      "train_samples": 172344,
+      "test_samples": 2879,
+      "train_time_seconds": 34.0
+    },
+    "windspeed": {
+      "onnx_file": "windspeed_model.onnx",
+      "onnx_size_kb": 1993.8,
+      "feature_names": [
+        "lag_1",
+        "lag_2",
+        "lag_3",
+        "lag_6",
+        "lag_12",
+        "lag_24",
+        "lag_48",
+        "lag_72",
+        "hour_sin",
+        "hour_cos",
+        "doy_sin",
+        "doy_cos",
+        "rolling_mean_24h",
+        "rolling_mean_72h",
+        "rolling_std_24h",
+        "delta_1h",
+        "delta_24h"
+      ],
+      "n_features": 17,
+      "metrics": {
+        "mae": 1.6617,
+        "rmse": 2.2662,
+        "r2": 0.7492,
+        "oob_score": 0.6931
+      },
+      "train_samples": 172344,
+      "test_samples": 2879,
+      "train_time_seconds": 43.7
+    }
+  }
 }

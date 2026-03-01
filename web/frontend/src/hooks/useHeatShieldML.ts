@@ -1,124 +1,116 @@
 /**
- * React hook for HeatShield ML weather forecasting.
+ * useHeatShieldML.ts
+ * ==================
+ * React hook for browser-side ML weather forecasting.
+ * Place in: web/frontend/src/hooks/useHeatShieldML.ts
  *
- * Manages the lifecycle of loading ONNX models, fetching weather history,
- * running recursive multi-step inference, and exposing predictions to the UI.
+ * Usage:
+ *   const { isLoading, error, predictWBGT, predictMultiStep } = useHeatShieldML();
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import {
-  loadModels,
-  fetchWeatherHistory,
-  runForecast,
-  MLPrediction,
-} from '../ml-inference';
-import { getUgandaDistricts } from '../wasm';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { HeatShieldML, type WBGTForecast } from '../ml-inference';
 
-export interface UseHeatShieldMLResult {
-  predictions: MLPrediction[];
+interface UseHeatShieldMLReturn {
+  /** True while ONNX models are being downloaded and initialized */
   isLoading: boolean;
-  isModelLoading: boolean;
+  /** Loading progress 0-100 */
+  loadProgress: number;
+  /** Which model is currently loading */
+  loadingModel: string;
+  /** Error message if model loading failed */
   error: string | null;
-  loadProgress: number; // 0-100
-  refresh: () => void;
-  inferenceTimeMs: number | null;
+  /** True once all 3 models are ready for inference */
+  isReady: boolean;
+  /** Single-step WBGT prediction */
+  predictWBGT: (
+    tempHistory: number[],
+    humHistory: number[],
+    windHistory: number[],
+    forecastHour: number,
+    forecastDOY: number,
+  ) => Promise<WBGTForecast>;
+  /** Multi-step recursive forecast (up to 72 hours) */
+  predictMultiStep: (
+    tempHistory: number[],
+    humHistory: number[],
+    windHistory: number[],
+    steps?: number,
+    startTime?: Date,
+  ) => Promise<WBGTForecast[]>;
+  /** Total ONNX model size downloaded (KB) */
+  modelSizeKB: number;
 }
 
-/**
- * @param districtName  One of the Ugandan district names (e.g. "Kampala")
- * @param forecastHours Number of hours to predict (default 24, max 72)
- */
-export function useHeatShieldML(
-  districtName: string,
-  forecastHours = 24,
-): UseHeatShieldMLResult {
-  const [predictions, setPredictions] = useState<MLPrediction[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [isModelLoading, setIsModelLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function useHeatShieldML(modelPath = '/models'): UseHeatShieldMLReturn {
+  const mlRef = useRef<HeatShieldML | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [loadProgress, setLoadProgress] = useState(0);
-  const [inferenceTimeMs, setInferenceTimeMs] = useState<number | null>(null);
-  const [trigger, setTrigger] = useState(0);
-
-  const refresh = useCallback(() => setTrigger((t) => t + 1), []);
+  const [loadingModel, setLoadingModel] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    let cancelled = false;
+    const ml = new HeatShieldML(modelPath);
+    mlRef.current = ml;
 
-    async function run() {
-      setError(null);
-      setIsLoading(true);
-      setPredictions([]);
-      setInferenceTimeMs(null);
+    ml.loadModels((loaded, total, name) => {
+      setLoadProgress(Math.round((loaded / total) * 100));
+      setLoadingModel(name);
+    })
+      .then(() => {
+        setIsLoading(false);
+        setIsReady(true);
+        console.log('[HeatShieldML] All 3 ONNX models loaded successfully');
+      })
+      .catch((err) => {
+        setIsLoading(false);
+        setError(err.message || 'Failed to load ML models');
+        console.error('[HeatShieldML] Load error:', err);
+      });
 
-      try {
-        // Step 1: Load ONNX models (cached after first load)
-        setIsModelLoading(true);
-        setLoadProgress(10);
-        await loadModels();
-        if (cancelled) return;
-        setIsModelLoading(false);
-        setLoadProgress(40);
-
-        // Step 2: Resolve district coordinates
-        const districts = getUgandaDistricts();
-        const district = districts.find(
-          (d) => d.name.toLowerCase() === districtName.toLowerCase(),
-        );
-        const lat = district?.lat ?? 0.3476; // Default: Kampala
-        const lon = district?.lon ?? 32.5825;
-
-        // Step 3: Fetch weather history from Open-Meteo
-        setLoadProgress(50);
-        const history = await fetchWeatherHistory(lat, lon);
-        if (cancelled) return;
-
-        if (history.length < 6) {
-          throw new Error(
-            `Insufficient weather history (got ${history.length} hours, need 6+).`,
-          );
-        }
-
-        setLoadProgress(70);
-
-        // Step 4: Run recursive forecast
-        const t0 = performance.now();
-        const hours = Math.min(forecastHours, 72);
-        const preds = await runForecast(history, hours);
-        const elapsed = performance.now() - t0;
-
-        if (cancelled) return;
-
-        setPredictions(preds);
-        setInferenceTimeMs(Math.round(elapsed));
-        setLoadProgress(100);
-      } catch (err) {
-        if (!cancelled) {
-          setError(
-            err instanceof Error ? err.message : 'ML forecast failed',
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-          setIsModelLoading(false);
-        }
-      }
-    }
-
-    run();
     return () => {
-      cancelled = true;
+      ml.dispose();
     };
-  }, [districtName, forecastHours, trigger]);
+  }, [modelPath]);
+
+  const predictWBGT = useCallback(
+    async (
+      temps: number[], hums: number[], winds: number[],
+      hour: number, doy: number,
+    ) => {
+      if (!mlRef.current?.isLoaded) {
+        throw new Error('ML models not ready');
+      }
+      return mlRef.current.predictWBGT(temps, hums, winds, hour, doy);
+    },
+    [],
+  );
+
+  const predictMultiStep = useCallback(
+    async (
+      temps: number[], hums: number[], winds: number[],
+      steps = 24, startTime = new Date(),
+    ) => {
+      if (!mlRef.current?.isLoaded) {
+        throw new Error('ML models not ready');
+      }
+      return mlRef.current.predictMultiStep(temps, hums, winds, steps, startTime);
+    },
+    [],
+  );
+
+  // Approximate total model size (3 models × ~2 MB each)
+  const modelSizeKB = 6000;
 
   return {
-    predictions,
     isLoading,
-    isModelLoading,
-    error,
     loadProgress,
-    refresh,
-    inferenceTimeMs,
+    loadingModel,
+    error,
+    isReady,
+    predictWBGT,
+    predictMultiStep,
+    modelSizeKB,
   };
 }
