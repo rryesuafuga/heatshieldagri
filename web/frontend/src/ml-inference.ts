@@ -3,7 +3,10 @@
  * Runs Random Forest ONNX models in the browser via onnxruntime-web.
  * Predicts temperature, humidity, wind speed → computes WBGT.
  *
- * Install: npm install onnxruntime-web
+ * IMPORTANT: onnxruntime-web is loaded DYNAMICALLY inside loadModels()
+ * so that a WASM initialization failure cannot crash the page at import time.
+ * If WASM fails, the error is caught and surfaced to the UI — the rest of
+ * the application continues to work.
  *
  * Usage:
  *   import { HeatShieldML } from './ml-inference';
@@ -12,7 +15,8 @@
  *   const forecast = await ml.predictMultiStep(temps, hums, winds, 24);
  */
 
-import * as ort from 'onnxruntime-web';
+// onnxruntime-web is NOT imported at the top level.
+// It is loaded dynamically in loadModels() to prevent module-level crashes.
 
 // ---- Types ----
 
@@ -27,6 +31,13 @@ export interface WBGTForecast {
   timestamp: Date;
 }
 
+// Runtime references populated after dynamic import
+interface OrtRuntime {
+  InferenceSession: typeof import('onnxruntime-web').InferenceSession;
+  Tensor: typeof import('onnxruntime-web').Tensor;
+  env: typeof import('onnxruntime-web').env;
+}
+
 // ---- Constants (must match Python training pipeline) ----
 
 const REQUIRED_HISTORY = 73; // max lag (72) + 1
@@ -37,7 +48,7 @@ const WBGT_THRESHOLDS = {
 
 // ---- WBGT Calculation (ISO 7243) ----
 
-function calculateWBGT(tempC: number, humPct: number, windMs: number): number {
+function calculateWBGT(tempC: number, humPct: number): number {
   const T = tempC, RH = humPct;
   // Stull (2011) psychrometric wet-bulb approximation
   const Tnwb =
@@ -108,8 +119,9 @@ function createFeatureVector(
 // ---- Main Class ----
 
 export class HeatShieldML {
-  private sessions: Record<string, ort.InferenceSession> = {};
+  private sessions: Record<string, import('onnxruntime-web').InferenceSession> = {};
   private _isLoaded = false;
+  private _ort: OrtRuntime | null = null;
 
   constructor(private modelBasePath = '/models') {}
 
@@ -118,9 +130,14 @@ export class HeatShieldML {
   async loadModels(
     onProgress?: (loaded: number, total: number, name: string) => void,
   ): Promise<void> {
-    // Let onnxruntime-web resolve WASM from its bundled assets or CDN fallback.
-    // Do NOT set wasmPaths to '/' — those files are gitignored and absent on Vercel.
+    // Dynamically import onnxruntime-web so a WASM init failure
+    // cannot crash the page at module-load time.
+    const ort = await import('onnxruntime-web');
+    this._ort = ort;
+
+    // Configure WASM runtime
     ort.env.wasm.numThreads = 1;
+
     const names = ['temperature', 'humidity', 'windspeed'];
     for (let i = 0; i < names.length; i++) {
       onProgress?.(i, names.length, names[i]);
@@ -134,10 +151,11 @@ export class HeatShieldML {
   }
 
   private async predict1(name: string, features: Float32Array): Promise<number> {
+    const ort = this._ort!;
     const s = this.sessions[name];
     const t = new ort.Tensor('float32', features, [1, features.length]);
     const r = await s.run({ [s.inputNames[0]]: t });
-    return (r[s.outputNames[0]].data as Float32Array)[0];
+    return Number(r[s.outputNames[0]].data[0]);
   }
 
   async predictWBGT(
@@ -153,7 +171,7 @@ export class HeatShieldML {
     const ct=Math.max(-10,Math.min(50,t));
     const ch=Math.max(0,Math.min(100,h));
     const cw=Math.max(0,Math.min(30,w));
-    const wbgt = calculateWBGT(ct, ch, cw);
+    const wbgt = calculateWBGT(ct, ch);
     const risk = getRiskLevel(wbgt);
     return {
       temperature: Math.round(ct*10)/10,

@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, Component } from 'react';
+import type { ReactNode } from 'react';
 import {
   LineChart,
   Line,
@@ -15,7 +16,43 @@ import { Calendar, Clock, TrendingUp, AlertTriangle, Loader2, CloudOff, RefreshC
 import { useAppStore } from '../store';
 import { classifyRisk, getUgandaDistricts, HourlyForecast } from '../wasm';
 import { useWeather, transformToWbgtForecast } from '../hooks/useWeather';
-import MLForecastPanel from './MLForecastPanel';
+
+// Lazy-load the ML panel so onnxruntime-web is never imported at page load time.
+// If WASM init fails, only this panel breaks — the rest of the Forecast page works.
+const MLForecastPanel = React.lazy(() => import('./MLForecastPanel'));
+
+// Error boundary: catches crashes inside MLForecastPanel and shows a fallback
+// instead of taking down the entire page.
+class MLErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; error: string }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="bg-yellow-50 rounded-lg border border-yellow-200 p-6">
+          <h3 className="text-lg font-semibold text-yellow-900 mb-2">
+            ML Forecast Unavailable
+          </h3>
+          <p className="text-sm text-yellow-700">
+            Could not load the Random Forest models: {this.state.error}
+          </p>
+          <p className="text-xs text-yellow-600 mt-2">
+            The physics-based WBGT forecast above remains fully functional.
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function DaySelector({
   selectedDay,
@@ -400,12 +437,25 @@ export default function Forecast() {
         {forecast.length > 0 && <HourlyBreakdown data={forecast} day={selectedDay} />}
       </div>
 
-      {/* ML-Enhanced Forecast */}
+      {/* ML-Enhanced Forecast — lazy-loaded with error boundary */}
       <div className="mt-8">
-        <MLForecastPanel
-          district={selectedDistrict?.name || 'Kampala'}
-          forecastHours={24}
-        />
+        <MLErrorBoundary>
+          <Suspense
+            fallback={
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 text-blue-600 animate-spin" />
+                  <span className="text-sm text-gray-600">Loading ML forecast module...</span>
+                </div>
+              </div>
+            }
+          >
+            <MLForecastPanel
+              district={selectedDistrict?.name || 'Kampala'}
+              forecastHours={24}
+            />
+          </Suspense>
+        </MLErrorBoundary>
       </div>
 
       {/* Recommendations */}
