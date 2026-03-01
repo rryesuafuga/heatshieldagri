@@ -118,7 +118,9 @@ export class HeatShieldML {
   async loadModels(
     onProgress?: (loaded: number, total: number, name: string) => void,
   ): Promise<void> {
-    ort.env.wasm.wasmPaths = '/';
+    // Let onnxruntime-web resolve WASM from its bundled assets or CDN fallback.
+    // Do NOT set wasmPaths to '/' — those files are gitignored and absent on Vercel.
+    ort.env.wasm.numThreads = 1;
     const names = ['temperature', 'humidity', 'windspeed'];
     for (let i = 0; i < names.length; i++) {
       onProgress?.(i, names.length, names[i]);
