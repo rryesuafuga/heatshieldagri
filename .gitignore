@@ -44,3 +44,6 @@ Thumbs.db
 
 # Ensure gradle wrapper jar is NOT ignored
 !gradle/wrapper/gradle-wrapper.jar
+
+# Rust build artifacts
+**/target/
