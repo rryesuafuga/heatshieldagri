@@ -55,44 +55,43 @@ let humidSession: ort.InferenceSession | null = null;
 let windSession: ort.InferenceSession | null = null;
 let modelsLoaded = false;
 let loadError: string | null = null;
+let loadPromise: Promise<void> | null = null;
 
 /**
  * Load all three ONNX models into memory. Idempotent — subsequent calls are
  * no-ops unless there was an error, in which case it retries.
+ * Safe against concurrent calls (returns the same promise).
  */
-export async function loadModels(): Promise<void> {
-  if (modelsLoaded) return;
+export function loadModels(): Promise<void> {
+  if (modelsLoaded) return Promise.resolve();
+  if (loadPromise) return loadPromise;
 
-  // Configure ONNX Runtime to prefer local WASM files
-  ort.env.wasm.numThreads = 1;
+  loadPromise = (async () => {
+    // Configure ONNX Runtime
+    ort.env.wasm.numThreads = 1;
 
-  const urls = {
-    temp: `${MODEL_BASE_PATH}/temperature_model.onnx`,
-    humid: `${MODEL_BASE_PATH}/humidity_model.onnx`,
-    wind: `${MODEL_BASE_PATH}/windspeed_model.onnx`,
-  };
+    const urls = {
+      temp: `${MODEL_BASE_PATH}/temperature_model.onnx`,
+      humid: `${MODEL_BASE_PATH}/humidity_model.onnx`,
+      wind: `${MODEL_BASE_PATH}/windspeed_model.onnx`,
+    };
 
-  try {
-    [tempSession, humidSession, windSession] = await Promise.all([
-      ort.InferenceSession.create(urls.temp, { executionProviders: ['wasm'] }),
-      ort.InferenceSession.create(urls.humid, { executionProviders: ['wasm'] }),
-      ort.InferenceSession.create(urls.wind, { executionProviders: ['wasm'] }),
-    ]);
-    modelsLoaded = true;
-    loadError = null;
-  } catch (err) {
-    loadError = err instanceof Error ? err.message : 'Failed to load ML models';
-    throw err;
-  }
-}
+    try {
+      [tempSession, humidSession, windSession] = await Promise.all([
+        ort.InferenceSession.create(urls.temp, { executionProviders: ['wasm'] }),
+        ort.InferenceSession.create(urls.humid, { executionProviders: ['wasm'] }),
+        ort.InferenceSession.create(urls.wind, { executionProviders: ['wasm'] }),
+      ]);
+      modelsLoaded = true;
+      loadError = null;
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : 'Failed to load ML models';
+      loadPromise = null; // Allow retry on next call
+      throw err;
+    }
+  })();
 
-export function getModelStatus(): MLModelStatus {
-  return {
-    loaded: modelsLoaded,
-    loading: false,
-    error: loadError,
-    loadTimeMs: null,
-  };
+  return loadPromise;
 }
 
 // ---------- feature engineering ----------
@@ -138,8 +137,8 @@ function buildFeatures(history: WeatherRow[]): Float32Array {
   features[7] = prev.windSpeed;                 // wind_lag2
   features[8] = Math.sin((2 * Math.PI * nextHour) / 24);   // hour_sin
   features[9] = Math.cos((2 * Math.PI * nextHour) / 24);   // hour_cos
-  features[10] = Math.sin((2 * Math.PI * nextDoy) / 365);  // month_sin
-  features[11] = Math.cos((2 * Math.PI * nextDoy) / 365);  // month_cos
+  features[10] = Math.sin((2 * Math.PI * nextDoy) / 365);  // seasonal_sin (day-of-year cycle)
+  features[11] = Math.cos((2 * Math.PI * nextDoy) / 365);  // seasonal_cos (day-of-year cycle)
   features[12] = tempMean6;                     // temp_rolling_mean_6h
   features[13] = humidMean6;                    // humid_rolling_mean_6h
   features[14] = windMean6;                     // wind_rolling_mean_6h
@@ -160,7 +159,8 @@ async function runModel(
   const results = await session.run({ [inputName]: tensor });
   const outputName = session.outputNames[0];
   const output = results[outputName];
-  return (output.data as Float32Array)[0];
+  // skl2onnx may emit Float64Array; use Number() for safety
+  return Number(output.data[0]);
 }
 
 // ---------- WBGT (ISO 7243 simplified outdoor) ----------
@@ -194,24 +194,37 @@ function classifyWbgt(wbgt: number) {
 // ---------- public API ----------
 
 /**
+ * Parse an ISO timestamp string (e.g. "2026-03-01T14:00") into hour-of-day
+ * and day-of-year WITHOUT relying on the browser's local timezone.
+ * Open-Meteo returns timestamps in the requested timezone (Africa/Kampala).
+ */
+function parseTimestamp(iso: string): { hour: number; dayOfYear: number } {
+  // Format: "YYYY-MM-DDTHH:MM" — parse directly
+  const hour = parseInt(iso.slice(11, 13), 10);
+  const month = parseInt(iso.slice(5, 7), 10) - 1; // 0-indexed
+  const day = parseInt(iso.slice(8, 10), 10);
+  const year = parseInt(iso.slice(0, 4), 10);
+  // Day-of-year via UTC Date to avoid DST shifts
+  const jan1 = Date.UTC(year, 0, 1);
+  const current = Date.UTC(year, month, day);
+  const dayOfYear = Math.floor((current - jan1) / 86400000) + 1;
+  return { hour, dayOfYear };
+}
+
+/**
  * Fetch recent weather history from Open-Meteo for a given location.
- * Returns at least 96 hours (4 days) of past hourly data.
+ * Uses `past_days` to reliably get ~4 days of historical hourly data.
  */
 export async function fetchWeatherHistory(
   lat: number,
   lon: number,
 ): Promise<WeatherRow[]> {
-  const end = new Date();
-  const start = new Date(end.getTime() - 4 * 24 * 60 * 60 * 1000);
-
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-
   const params = new URLSearchParams({
     latitude: lat.toString(),
     longitude: lon.toString(),
     hourly: 'temperature_2m,relative_humidity_2m,wind_speed_10m',
-    start_date: fmt(start),
-    end_date: fmt(end),
+    past_days: '4',
+    forecast_days: '1',
     timezone: 'Africa/Kampala',
   });
 
@@ -221,23 +234,31 @@ export async function fetchWeatherHistory(
   if (!resp.ok) throw new Error(`Open-Meteo error: ${resp.status}`);
 
   const data = await resp.json();
-  const times: string[] = data.hourly.time;
-  const temps: number[] = data.hourly.temperature_2m;
-  const humids: number[] = data.hourly.relative_humidity_2m;
-  const winds: number[] = data.hourly.wind_speed_10m;
 
-  return times.map((t, i) => {
-    const d = new Date(t);
-    return {
-      temperature: temps[i],
-      humidity: humids[i],
-      windSpeed: winds[i] / 3.6, // km/h → m/s
-      hour: d.getHours(),
-      dayOfYear: Math.floor(
-        (d.getTime() - new Date(d.getFullYear(), 0, 0).getTime()) / 86400000,
-      ),
-    };
-  });
+  if (!data.hourly?.time || !data.hourly?.temperature_2m) {
+    throw new Error('Invalid weather data from Open-Meteo');
+  }
+
+  const times: string[] = data.hourly.time;
+  const temps: (number | null)[] = data.hourly.temperature_2m;
+  const humids: (number | null)[] = data.hourly.relative_humidity_2m;
+  const winds: (number | null)[] = data.hourly.wind_speed_10m;
+
+  // Filter out rows with null values (gaps in observations)
+  const rows: WeatherRow[] = [];
+  for (let i = 0; i < times.length; i++) {
+    if (temps[i] == null || humids[i] == null || winds[i] == null) continue;
+    const { hour, dayOfYear } = parseTimestamp(times[i]);
+    rows.push({
+      temperature: temps[i] as number,
+      humidity: humids[i] as number,
+      windSpeed: (winds[i] as number) / 3.6, // km/h → m/s
+      hour,
+      dayOfYear,
+    });
+  }
+
+  return rows;
 }
 
 /**
@@ -271,10 +292,10 @@ export async function runForecast(
       runModel(windSession, features),
     ]);
 
-    // Clamp to physical ranges
-    const temp = predTemp;
+    // Clamp to physical ranges (prevents recursive drift)
+    const temp = Math.max(-5, Math.min(55, predTemp));
     const humid = Math.max(5, Math.min(100, predHumid));
-    const wind = Math.max(0, predWind);
+    const wind = Math.max(0, Math.min(30, predWind));
 
     const lastRow = buffer[buffer.length - 1];
     const nextHour = (lastRow.hour + 1) % 24;
