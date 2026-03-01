@@ -17,8 +17,6 @@ import kotlin.math.abs
 class WeatherRepository @Inject constructor(
     private val weatherApiService: WeatherApiService
 ) {
-    private val calculator = WbgtCalculator()
-
     suspend fun getWeatherForLocation(lat: Double, lon: Double): Result<WeatherData> {
         return withContext(Dispatchers.IO) {
             try {
@@ -41,7 +39,7 @@ class WeatherRepository @Inject constructor(
         val solarRadiation = response.current.shortwave_radiation ?: estimateSolarRadiation()
 
         // Calculate current WBGT
-        val currentWbgt = calculator.calculateWbgt(
+        val currentWbgt = WbgtCalculator.calculateWbgt(
             temperature = response.current.temperature_2m,
             humidity = response.current.relative_humidity_2m.toDouble(),
             windSpeed = windSpeedMs,
@@ -54,7 +52,7 @@ class WeatherRepository @Inject constructor(
             val hourSolar = response.hourly.shortwave_radiation?.getOrNull(index)
                 ?: estimateSolarRadiationForHour(index % 24)
 
-            val hourWbgt = calculator.calculateWbgt(
+            val hourWbgt = WbgtCalculator.calculateWbgt(
                 temperature = response.hourly.temperature_2m[index],
                 humidity = response.hourly.relative_humidity_2m[index].toDouble(),
                 windSpeed = hourWindSpeed,

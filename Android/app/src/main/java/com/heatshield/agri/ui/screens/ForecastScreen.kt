@@ -51,7 +51,7 @@ fun ForecastScreen() {
                 hour = hour,
                 wbgt = result.wbgt,
                 temperature = temp,
-                humidity = humidity,
+                humidity = humidity.toInt(),
                 windSpeed = wind,
                 solarRadiation = solar
             )

@@ -6,6 +6,7 @@
 
 # Keep data classes
 -keep class com.heatshield.agri.data.model.** { *; }
+-keep class com.heatshield.agri.data.api.** { *; }
 
 # Keep Retrofit
 -keepattributes Signature

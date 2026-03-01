@@ -35,22 +35,22 @@ jobs:
 
     - name: Build Debug APK
       working-directory: Android
-      run: ./gradlew assembleDebug --no-daemon
+      run: ./gradlew assembleDebug --no-daemon --stacktrace
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
         name: heatshield-agri-debug
-        path: Android/app/build/outputs/apk/debug/app-debug.apk
+        path: Android/app/build/outputs/apk/debug/*.apk
         retention-days: 30
 
     - name: Build Release APK (unsigned)
       working-directory: Android
-      run: ./gradlew assembleRelease --no-daemon
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
 
     - name: Upload Release APK
       uses: actions/upload-artifact@v4
       with:
         name: heatshield-agri-release-unsigned
-        path: Android/app/build/outputs/apk/release/app-release-unsigned.apk
+        path: Android/app/build/outputs/apk/release/*.apk
         retention-days: 30
