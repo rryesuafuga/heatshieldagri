@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="sunGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f97316"/>
+      <stop offset="100%" style="stop-color:#ef4444"/>
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#22c55e"/>
+      <stop offset="100%" style="stop-color:#16a34a"/>
+    </linearGradient>
+  </defs>
+  <!-- Sun -->
+  <circle cx="50" cy="30" r="15" fill="url(#sunGrad)"/>
+  <!-- Sun rays -->
+  <g stroke="#f97316" stroke-width="2" stroke-linecap="round">
+    <line x1="50" y1="8" x2="50" y2="2"/>
+    <line x1="65" y1="15" x2="70" y2="10"/>
+    <line x1="72" y1="30" x2="78" y2="30"/>
+    <line x1="65" y1="45" x2="70" y2="50"/>
+    <line x1="35" y1="45" x2="30" y2="50"/>
+    <line x1="28" y1="30" x2="22" y2="30"/>
+    <line x1="35" y1="15" x2="30" y2="10"/>
+  </g>
+  <!-- Shield -->
+  <path d="M50 45 L75 55 L75 75 Q75 90 50 98 Q25 90 25 75 L25 55 Z"
+        fill="url(#shieldGrad)" stroke="#16a34a" stroke-width="2"/>
+  <!-- Leaf inside shield -->
+  <path d="M50 58 Q40 68 45 80 Q50 70 55 80 Q60 68 50 58"
+        fill="#166534" stroke="#166534" stroke-width="1"/>
+</svg>

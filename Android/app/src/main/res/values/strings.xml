@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HeatShield Agri</string>
+    <string name="app_description">Agricultural Worker Heat Stress Early Warning System</string>
+
+    <!-- Navigation -->
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_forecast">Forecast</string>
+    <string name="nav_map">Map</string>
+    <string name="nav_schedule">Schedule</string>
+    <string name="nav_alerts">Alerts</string>
+    <string name="nav_demo">Demo</string>
+
+    <!-- Risk Levels -->
+    <string name="risk_low">Low Risk</string>
+    <string name="risk_moderate">Moderate Risk</string>
+    <string name="risk_high">High Risk</string>
+    <string name="risk_very_high">Very High Risk</string>
+    <string name="risk_extreme">Extreme Risk</string>
+
+    <!-- Recommendations -->
+    <string name="recommendation_low">Normal work schedule. Stay hydrated with 250ml water every 30 minutes.</string>
+    <string name="recommendation_moderate">Take 15-minute breaks every hour. Increase water intake to 500ml per hour.</string>
+    <string name="recommendation_high">Work only during cooler hours (5-10am, 4-6pm). Take 30-minute breaks per hour.</string>
+    <string name="recommendation_very_high">Limit outdoor work to 6-10am only. Monitor all workers for heat stress symptoms.</string>
+    <string name="recommendation_extreme">SUSPEND all outdoor agricultural work. Emergency protocols active.</string>
+
+    <!-- Weather -->
+    <string name="temperature">Temperature</string>
+    <string name="humidity">Humidity</string>
+    <string name="wind_speed">Wind Speed</string>
+    <string name="solar_radiation">Solar Radiation</string>
+
+    <!-- Actions -->
+    <string name="refresh">Refresh</string>
+    <string name="save">Save</string>
+    <string name="cancel">Cancel</string>
+    <string name="change">Change</string>
+
+    <!-- Languages -->
+    <string name="language_english">English</string>
+    <string name="language_luganda">Luganda</string>
+    <string name="language_runyankole">Runyankole</string>
+    <string name="language_acholi">Acholi</string>
+    <string name="language_swahili">Swahili</string>
+</resources>

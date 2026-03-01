@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --heat-low: #22c55e;
+  --heat-moderate: #eab308;
+  --heat-high: #f97316;
+  --heat-very-high: #ef4444;
+  --heat-extreme: #7c2d12;
+}
+
+body {
+  @apply bg-gray-50 text-gray-900 antialiased;
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-green-600 hover:bg-green-700 text-white font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  }
+
+  .btn-secondary {
+    @apply bg-gray-200 hover:bg-gray-300 text-gray-800 font-medium py-2 px-4 rounded-lg transition-colors duration-200;
+  }
+
+  .card {
+    @apply bg-white rounded-xl shadow-md p-6;
+  }
+
+  .risk-badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-medium;
+  }
+
+  .risk-badge-low {
+    @apply bg-green-100 text-green-800;
+  }
+
+  .risk-badge-moderate {
+    @apply bg-yellow-100 text-yellow-800;
+  }
+
+  .risk-badge-high {
+    @apply bg-orange-100 text-orange-800;
+  }
+
+  .risk-badge-very-high {
+    @apply bg-red-100 text-red-800;
+  }
+
+  .risk-badge-extreme {
+    @apply bg-red-900 text-white;
+  }
+}
+
+/* Heat map grid cell styles */
+.heat-grid-cell {
+  transition: opacity 0.3s ease;
+}
+
+.heat-grid-cell:hover {
+  opacity: 0.8;
+  cursor: pointer;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
