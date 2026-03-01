@@ -123,6 +123,9 @@ export class HeatShieldML {
   private _isLoaded = false;
   private _ort: OrtRuntime | null = null;
   private _loadPromise: Promise<void> | null = null;
+  // Per-session lock chain to prevent concurrent session.run() calls
+  // which cause "Session already started".
+  private _runLocks: Record<string, Promise<unknown>> = {};
 
   constructor(private modelBasePath = '/models') {}
 
@@ -169,11 +172,19 @@ export class HeatShieldML {
   }
 
   private async predict1(name: string, features: Float32Array): Promise<number> {
-    const ort = this._ort!;
-    const s = this.sessions[name];
-    const t = new ort.Tensor('float32', features, [1, features.length]);
-    const r = await s.run({ [s.inputNames[0]]: t });
-    return Number(r[s.outputNames[0]].data[0]);
+    // Serialize access per session — onnxruntime-web throws
+    // "Session already started" if session.run() is called concurrently.
+    const prev = this._runLocks[name] ?? Promise.resolve();
+    const current = prev.then(async () => {
+      const ort = this._ort!;
+      const s = this.sessions[name];
+      const t = new ort.Tensor('float32', features, [1, features.length]);
+      const r = await s.run({ [s.inputNames[0]]: t });
+      return Number(r[s.outputNames[0]].data[0]);
+    });
+    // Store the lock (swallow rejections so the chain doesn't break)
+    this._runLocks[name] = current.catch(() => {});
+    return current;
   }
 
   async predictWBGT(

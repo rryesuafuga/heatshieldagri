@@ -13,7 +13,7 @@
  * Integration: Import and add to your Forecast page or Dashboard.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useHeatShieldML } from '../hooks/useHeatShieldML';
 import type { WBGTForecast } from '../ml-inference';
 
@@ -123,13 +123,18 @@ export default function MLForecastPanel({
   const [isForecasting, setIsForecasting] = useState(false);
   const [forecastError, setForecastError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  // Ref-based guard prevents concurrent forecast runs (e.g. from React
+  // StrictMode double-firing the effect or rapid dependency changes).
+  const isForecastingRef = useRef(false);
 
   const runForecast = useCallback(async () => {
-    if (!isReady) return;
+    if (!isReady || isForecastingRef.current) return;
+    isForecastingRef.current = true;
 
     const coords = DISTRICTS[district];
     if (!coords) {
       setForecastError(`Unknown district: ${district}`);
+      isForecastingRef.current = false;
       return;
     }
 
@@ -153,6 +158,7 @@ export default function MLForecastPanel({
       setForecastError(err.message || 'Forecast failed');
       console.error('[MLForecast] Error:', err);
     } finally {
+      isForecastingRef.current = false;
       setIsForecasting(false);
     }
   }, [isReady, district, forecastHours, predictMultiStep]);
