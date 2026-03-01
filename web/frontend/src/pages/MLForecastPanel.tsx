@@ -52,19 +52,13 @@ const DISTRICTS: Record<string, DistrictCoords> = {
 async function fetchWeatherHistory(
   lat: number, lon: number,
 ): Promise<{ temps: number[]; hums: number[]; winds: number[]; timestamps: Date[] }> {
-  // Need 73+ hours of history for lag features. Fetch 4 days to be safe.
-  const now = new Date();
-  const fourDaysAgo = new Date(now.getTime() - 4 * 24 * 60 * 60 * 1000);
-
-  const startDate = fourDaysAgo.toISOString().split('T')[0];
-  const endDate = now.toISOString().split('T')[0];
-
+  // Need 73+ hours of history for lag features. Fetch 4 days of past data.
+  // Use ONLY past_days (not start_date/end_date — combining both causes a 400).
   const url = `https://api.open-meteo.com/v1/forecast?` +
     `latitude=${lat}&longitude=${lon}` +
     `&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m` +
-    `&start_date=${startDate}&end_date=${endDate}` +
-    `&timezone=Africa/Kampala` +
-    `&past_days=4`;
+    `&past_days=4&forecast_days=1` +
+    `&timezone=Africa/Kampala`;
 
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`Open-Meteo API error: ${resp.status}`);
