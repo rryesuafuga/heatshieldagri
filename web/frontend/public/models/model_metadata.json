@@ -1,0 +1,57 @@
+{
+  "models": {
+    "temperature": {
+      "file": "temperature_model.onnx",
+      "type": "RandomForestRegressor",
+      "n_estimators": 20,
+      "max_depth": 8,
+      "output_unit": "celsius"
+    },
+    "humidity": {
+      "file": "humidity_model.onnx",
+      "type": "RandomForestRegressor",
+      "n_estimators": 20,
+      "max_depth": 8,
+      "output_unit": "percent"
+    },
+    "windspeed": {
+      "file": "windspeed_model.onnx",
+      "type": "RandomForestRegressor",
+      "n_estimators": 20,
+      "max_depth": 8,
+      "output_unit": "m/s"
+    }
+  },
+  "features": [
+    "temp_lag1",
+    "temp_lag2",
+    "temp_lag3",
+    "humid_lag1",
+    "humid_lag2",
+    "humid_lag3",
+    "wind_lag1",
+    "wind_lag2",
+    "hour_sin",
+    "hour_cos",
+    "month_sin",
+    "month_cos",
+    "temp_rolling_mean_6h",
+    "humid_rolling_mean_6h",
+    "wind_rolling_mean_6h",
+    "temp_delta_1h",
+    "humid_delta_1h"
+  ],
+  "feature_count": 17,
+  "training": {
+    "districts": [
+      "Kampala",
+      "Gulu",
+      "Moroto",
+      "Mbale"
+    ],
+    "years": 5,
+    "total_samples": 175176,
+    "source": "Open-Meteo historical weather data"
+  },
+  "version": "1.0.0"
+}

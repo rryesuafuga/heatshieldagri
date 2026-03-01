@@ -27,5 +27,8 @@ yarn-error.log*
 # Test coverage
 coverage/
 
+# ONNX Runtime WASM binaries (downloaded from node_modules at build time)
+public/*.wasm
+
 # Vercel
 .vercel

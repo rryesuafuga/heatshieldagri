@@ -9,6 +9,9 @@ export default defineConfig({
     sourcemap: false,
     minify: 'esbuild',
   },
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+  },
   server: {
     port: 3000,
   },

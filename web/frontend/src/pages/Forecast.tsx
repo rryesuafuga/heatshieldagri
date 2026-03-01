@@ -15,6 +15,7 @@ import { Calendar, Clock, TrendingUp, AlertTriangle, Loader2, CloudOff, RefreshC
 import { useAppStore } from '../store';
 import { classifyRisk, getUgandaDistricts, HourlyForecast } from '../wasm';
 import { useWeather, transformToWbgtForecast } from '../hooks/useWeather';
+import MLForecastPanel from './MLForecastPanel';
 
 function DaySelector({
   selectedDay,
@@ -397,6 +398,14 @@ export default function Forecast() {
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Hourly Breakdown</h2>
         {forecast.length > 0 && <HourlyBreakdown data={forecast} day={selectedDay} />}
+      </div>
+
+      {/* ML-Enhanced Forecast */}
+      <div className="mt-8">
+        <MLForecastPanel
+          district={selectedDistrict?.name || 'Kampala'}
+          forecastHours={24}
+        />
       </div>
 
       {/* Recommendations */}
