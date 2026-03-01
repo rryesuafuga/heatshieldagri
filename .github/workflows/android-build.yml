@@ -26,44 +26,37 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    - name: Setup Gradle 8.4
+    - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: '8.4'
 
     - name: Install Android SDK platform 34
       run: |
         yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
         $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+    - name: Make gradlew executable
+      run: chmod +x Android/gradlew
+
     - name: Build Debug APK
       working-directory: Android
-      run: |
-        gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log || {
-          echo "===== BUILD FAILED - Last 100 lines ====="
-          tail -100 build.log
-          exit 1
-        }
+      run: ./gradlew assembleDebug --no-daemon --stacktrace
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
         name: heatshield-agri-debug
         path: Android/app/build/outputs/apk/debug/*.apk
+        if-no-files-found: error
         retention-days: 30
 
     - name: Build Release APK (unsigned)
       working-directory: Android
-      run: |
-        gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build-release.log || {
-          echo "===== BUILD FAILED - Last 100 lines ====="
-          tail -100 build-release.log
-          exit 1
-        }
+      run: ./gradlew assembleRelease --no-daemon --stacktrace
 
     - name: Upload Release APK
       uses: actions/upload-artifact@v4
       with:
         name: heatshield-agri-release-unsigned
         path: Android/app/build/outputs/apk/release/*.apk
+        if-no-files-found: error
         retention-days: 30
