@@ -81,7 +81,9 @@ function ScheduleVisualization({
   forecast: HourlyForecast[];
   schedule: WorkSchedule;
 }) {
-  const data = forecast.map((f) => ({
+  // Only show daylight working hours (06:00–18:00)
+  const daylight = forecast.filter((f) => f.hour >= 6 && f.hour < 18);
+  const data = daylight.map((f) => ({
     hour: `${f.hour.toString().padStart(2, '0')}:00`,
     wbgt: f.wbgt,
     isRecommended: schedule.safe_hours.includes(f.hour),
@@ -453,7 +455,7 @@ export default function Schedule() {
           {/* Schedule Visualization */}
           <div className="card mb-8">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Today's WBGT Forecast & Recommended Hours
+              WBGT Forecast & Recommended Work Hours (06:00 – 18:00)
             </h2>
             <ScheduleVisualization forecast={forecast} schedule={schedule} />
             <div className="flex items-center justify-center mt-4 space-x-6">
@@ -468,11 +470,13 @@ export default function Schedule() {
             </div>
           </div>
 
-          {/* Hour Grid */}
+          {/* Hour Grid — daylight working hours only */}
           <div className="card mb-8">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Hourly Breakdown</h2>
-            <div className="grid grid-cols-6 md:grid-cols-8 lg:grid-cols-12 gap-3">
-              {forecast.map((f) => (
+            <h2 className="text-lg font-semibold text-gray-900 mb-4">
+              Hourly Breakdown (06:00 – 18:00)
+            </h2>
+            <div className="grid grid-cols-6 md:grid-cols-6 lg:grid-cols-12 gap-3">
+              {forecast.filter((f) => f.hour >= 6 && f.hour < 18).map((f) => (
                 <TimeSlot
                   key={f.hour}
                   hour={f.hour}

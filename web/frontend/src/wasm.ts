@@ -234,21 +234,31 @@ export function generate72hForecast(baseTemp: number, humidity: number): HourlyF
 /**
  * Optimize work schedule
  */
+// Daylight working hours for agricultural workers (6 AM – 6 PM)
+const WORK_HOUR_START = 6;
+const WORK_HOUR_END = 18;
+
 export function optimizeWorkSchedule(
   forecast: HourlyForecast[],
   workHoursNeeded: number
 ): WorkSchedule {
-  const hourScores = forecast.map((f) => ({ hour: f.hour, wbgt: f.wbgt }));
-  hourScores.sort((a, b) => a.wbgt - b.wbgt);
+  // Only consider daylight working hours (06:00–18:00)
+  const daylight = forecast
+    .filter((f) => f.hour >= WORK_HOUR_START && f.hour < WORK_HOUR_END)
+    .map((f) => ({ hour: f.hour, wbgt: f.wbgt }));
 
-  const safeHours = hourScores
-    .slice(0, Math.min(workHoursNeeded, 12))
+  daylight.sort((a, b) => a.wbgt - b.wbgt);
+
+  const safeHours = daylight
+    .slice(0, Math.min(workHoursNeeded, daylight.length))
     .map((h) => h.hour)
     .sort((a, b) => a - b);
 
   const avgWbgt =
-    hourScores.slice(0, workHoursNeeded).reduce((sum, h) => sum + h.wbgt, 0) /
-    workHoursNeeded;
+    safeHours.length > 0
+      ? daylight.slice(0, safeHours.length).reduce((sum, h) => sum + h.wbgt, 0) /
+        safeHours.length
+      : 30;
 
   const productivityScore = Math.max(0, Math.min(100, ((40 - avgWbgt) / 40) * 100));
 
