@@ -145,21 +145,32 @@ object WbgtCalculator {
         }
     }
 
+    private const val WORK_HOUR_START = 6
+    private const val WORK_HOUR_END = 18
+
     /**
-     * Optimize work schedule
+     * Optimize work schedule — restricted to daylight hours (06:00-18:00)
      */
     fun optimizeWorkSchedule(
         forecast: List<HourlyForecast>,
         workHoursNeeded: Int
     ): WorkSchedule {
-        val hourScores = forecast.map { it.hour to it.wbgt }.sortedBy { it.second }
+        // Filter to daylight hours only
+        val daylight = forecast
+            .filter { it.hour in WORK_HOUR_START until WORK_HOUR_END }
+            .map { it.hour to it.wbgt }
+
+        val hourScores = daylight.sortedBy { it.second }
 
         val safeHours = hourScores
-            .take(minOf(workHoursNeeded, 12))
+            .take(minOf(workHoursNeeded, daylight.size))
             .map { it.first }
             .sorted()
 
-        val avgWbgt = hourScores.take(workHoursNeeded).map { it.second }.average()
+        val avgWbgt = if (hourScores.isNotEmpty()) {
+            hourScores.take(minOf(workHoursNeeded, hourScores.size))
+                .map { it.second }.average()
+        } else 30.0
 
         val productivityScore = ((40.0 - avgWbgt) / 40.0 * 100.0).coerceIn(0.0, 100.0)
 
@@ -173,8 +184,8 @@ object WbgtCalculator {
         return WorkSchedule(
             safeHours = safeHours,
             totalSafeHours = safeHours.size,
-            recommendedStart = safeHours.firstOrNull() ?: 6,
-            recommendedEnd = safeHours.lastOrNull() ?: 17,
+            recommendedStart = safeHours.firstOrNull() ?: WORK_HOUR_START,
+            recommendedEnd = (safeHours.lastOrNull() ?: 17) + 1,
             breakSchedule = breakSchedule,
             productivityScore = productivityScore
         )

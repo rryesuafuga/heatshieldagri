@@ -107,6 +107,9 @@ dependencies {
     implementation("com.patrykandpatrick.vico:compose:1.13.1")
     implementation("com.patrykandpatrick.vico:compose-m3:1.13.1")
 
+    // ONNX Runtime — native C++ inference engine via JNI (high performance)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.16.3")
+
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
