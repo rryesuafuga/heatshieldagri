@@ -1,0 +1,20 @@
+{
+  "name": "heatshield-wasm",
+  "type": "module",
+  "collaborators": [
+    "HeatShield Agri Team"
+  ],
+  "description": "WebAssembly module for WBGT calculations and heat stress prediction",
+  "version": "1.0.0",
+  "license": "MIT",
+  "files": [
+    "heatshield_wasm_bg.wasm",
+    "heatshield_wasm.js",
+    "heatshield_wasm.d.ts"
+  ],
+  "main": "heatshield_wasm.js",
+  "types": "heatshield_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

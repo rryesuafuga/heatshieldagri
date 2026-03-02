@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "prebuild": "cp node_modules/onnxruntime-web/dist/*.wasm public/ && cd ../heatshield-wasm && wasm-pack build --target web --out-dir pkg",
+    "prebuild": "cp node_modules/onnxruntime-web/dist/*.wasm public/",
     "build": "vite build",
     "build:check": "tsc --noEmit && vite build",
     "preview": "vite preview",
