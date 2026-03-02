@@ -33,13 +33,16 @@ function TimeSlot({
   isRecommended: boolean;
 }) {
   const risk = classifyRisk(wbgt);
+  // Use risk color for recommended slots, muted gray for non-recommended
+  const valueColor = isRecommended ? risk.color : '#9ca3af';
+  const badgeColor = isRecommended ? risk.color : '#9ca3af';
 
   return (
     <div
       className={`relative p-3 rounded-lg border-2 transition-all ${
         isRecommended
           ? 'border-green-500 bg-green-50'
-          : 'border-gray-200 bg-white'
+          : 'border-gray-200 bg-gray-50 opacity-60'
       }`}
     >
       {isRecommended && (
@@ -48,20 +51,20 @@ function TimeSlot({
         </div>
       )}
       <div className="text-center">
-        <div className="text-sm font-medium text-gray-700">
+        <div className={`text-sm font-medium ${isRecommended ? 'text-gray-700' : 'text-gray-400'}`}>
           {hour.toString().padStart(2, '0')}:00
         </div>
         <div
           className="text-lg font-bold mt-1"
-          style={{ color: risk.color }}
+          style={{ color: valueColor }}
         >
           {wbgt.toFixed(1)}°
         </div>
         <div
           className="text-xs mt-1 px-2 py-0.5 rounded-full"
           style={{
-            backgroundColor: `${risk.color}20`,
-            color: risk.color,
+            backgroundColor: `${badgeColor}20`,
+            color: badgeColor,
           }}
         >
           {risk.risk_level}
