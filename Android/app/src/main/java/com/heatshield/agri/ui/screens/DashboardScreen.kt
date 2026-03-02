@@ -500,7 +500,7 @@ fun WorkScheduleCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 LinearProgressIndicator(
-                    progress = { (productivityScore / 100).toFloat() },
+                    progress = (productivityScore / 100).toFloat(),
                     modifier = Modifier
                         .weight(1f)
                         .height(8.dp)

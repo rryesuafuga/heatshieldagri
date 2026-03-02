@@ -238,7 +238,7 @@ fun ProductivityCard(
         ) {
             Box(contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(
-                    progress = { (score / 100).toFloat() },
+                    progress = (score / 100).toFloat(),
                     modifier = Modifier.size(60.dp),
                     strokeWidth = 6.dp,
                     color = MaterialTheme.colorScheme.primary,
