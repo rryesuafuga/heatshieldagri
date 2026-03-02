@@ -1,6 +1,7 @@
 package com.heatshield.agri.data.repository
 
 import com.heatshield.agri.data.WbgtCalculator
+import com.heatshield.agri.data.api.HistoricalWeatherResponse
 import com.heatshield.agri.data.api.WeatherApiService
 import com.heatshield.agri.data.api.WeatherResponse
 import com.heatshield.agri.data.model.District
@@ -102,6 +103,72 @@ class WeatherRepository @Inject constructor(
         return maxOf(0.0, maxRadiation * kotlin.math.cos((hoursFromNoon / 6.0) * (Math.PI / 2)))
     }
 
+    suspend fun getWeatherWithHistory(lat: Double, lon: Double): Result<WeatherHistoryData> {
+        return withContext(Dispatchers.IO) {
+            try {
+                val response = weatherApiService.getWeatherWithHistory(lat, lon)
+                val data = transformHistoricalResponse(response)
+                Result.success(data)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+    }
+
+    private fun transformHistoricalResponse(response: HistoricalWeatherResponse): WeatherHistoryData {
+        val times = response.hourly.time
+        val temps = response.hourly.temperature_2m
+        val hums = response.hourly.relative_humidity_2m
+        val winds = response.hourly.wind_speed_10m
+        val solar = response.hourly.shortwave_radiation
+
+        // past_days=4 gives ~96 hours history, forecast_days=2 gives ~48 hours forecast
+        // Total ~144 hours. Split: first 96 = history, rest = forecast
+        val historyCount = minOf(96, times.size)
+        val forecastStartIndex = historyCount
+
+        // History arrays for ML lag features
+        val historyTemps = temps.subList(0, historyCount).map { it }
+        val historyHums = hums.subList(0, historyCount).map { it.toDouble() }
+        val historyWinds = winds.subList(0, historyCount).map { it / 3.6 } // km/h to m/s
+
+        // Physics forecast from NWP data
+        val physicsForecast = if (forecastStartIndex < times.size) {
+            (forecastStartIndex until times.size).map { i ->
+                val hour = i % 24
+                val windMs = winds[i] / 3.6
+                val solarRad = solar?.getOrNull(i) ?: estimateSolarRadiationForHour(hour)
+
+                val wbgtResult = WbgtCalculator.calculateWbgt(
+                    temperature = temps[i],
+                    humidity = hums[i].toDouble(),
+                    windSpeed = windMs,
+                    solarRadiation = solarRad
+                )
+
+                HourlyForecast(
+                    hour = hour,
+                    time = times[i],
+                    temperature = temps[i],
+                    humidity = hums[i],
+                    windSpeed = windMs,
+                    solarRadiation = solarRad,
+                    wbgt = wbgtResult.wbgt,
+                    riskLevel = wbgtResult.riskLevel
+                )
+            }
+        } else {
+            emptyList()
+        }
+
+        return WeatherHistoryData(
+            physicsForecast = physicsForecast,
+            historyTemps = historyTemps,
+            historyHums = historyHums,
+            historyWinds = historyWinds
+        )
+    }
+
     companion object {
         val UGANDA_DISTRICTS = listOf(
             District(1, "Kampala", "Central", 0.3476, 32.5825),
@@ -119,3 +186,10 @@ class WeatherRepository @Inject constructor(
         )
     }
 }
+
+data class WeatherHistoryData(
+    val physicsForecast: List<HourlyForecast>,
+    val historyTemps: List<Double>,
+    val historyHums: List<Double>,
+    val historyWinds: List<Double>
+)

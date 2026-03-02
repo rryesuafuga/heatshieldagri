@@ -18,7 +18,7 @@ import kotlin.math.*
  * HeatShield ML Inference Engine for Android
  *
  * Runs Random Forest ONNX models via ONNX Runtime's native C++ backend (JNI).
- * Predicts temperature, humidity, wind speed → computes WBGT.
+ * Predicts temperature, humidity, wind speed then computes WBGT.
  *
  * 17-feature engineering matches the Python training pipeline exactly:
  * 8 lag + 4 cyclical time + 3 rolling stats + 2 delta features
@@ -59,6 +59,7 @@ class HeatShieldMLInference @Inject constructor() {
                         it.readBytes()
                     }
                     val opts = OrtSession.SessionOptions().apply {
+                        setIntraOpNumThreads(2)
                         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
                     }
                     sessions[name] = env.createSession(modelBytes, opts)
@@ -86,14 +87,17 @@ class HeatShieldMLInference @Inject constructor() {
                     session.run(mapOf(inputName to t)).use { result ->
                         val output = result.get(0).value
                         when (output) {
-                                    is Array<*> -> {
-                                        when (inner) {
-                                            is FloatArray -> inner[0]
-                                            is DoubleArray -> inner[0].toFloat()
-                                            is LongArray -> inner[0].toFloat()
-                                            else -> (inner as Number).toFloat()
-                                        }
-                                    }
+                            is Array<*> -> {
+                                val inner = output[0]
+                                when (inner) {
+                                    is FloatArray -> inner[0]
+                                    is DoubleArray -> inner[0].toFloat()
+                                    is LongArray -> inner[0].toFloat()
+                                    else -> (inner as Number).toFloat()
+                                }
+                            }
+                            is FloatArray -> output[0]
+                            else -> (output as Number).toFloat()
                         }
                     }
                 }
@@ -102,6 +106,7 @@ class HeatShieldMLInference @Inject constructor() {
     }
 
     // ---- Feature Engineering (must match Python training pipeline exactly) ----
+    // 17 features: lag_1, lag_2, lag_3, lag_6, lag_12, lag_24, lag_48, lag_72,
     //   hour_sin, hour_cos, doy_sin, doy_cos,
     //   rolling_mean_24h, rolling_mean_72h, rolling_std_24h,
     //   delta_1h, delta_24h
@@ -147,15 +152,17 @@ class HeatShieldMLInference @Inject constructor() {
         val tnwb = t * atan(0.151977 * sqrt(rh + 8.313659)) +
                 atan(t + rh) - atan(rh - 1.676331) +
                 0.00391838 * rh.pow(1.5) * atan(0.023101 * rh) - 4.686035
+        val tg = t + 2.0
         return (0.7 * tnwb + 0.2 * tg + 0.1 * t).let { (it * 10).roundToInt() / 10.0 }
     }
 
-            wbgt < WBGT_LOW -> "Low"
-            wbgt < WBGT_MODERATE -> "Moderate"
-            wbgt < WBGT_HIGH -> "High"
-            wbgt < WBGT_VERY_HIGH -> "Very High"
-            else -> "Extreme"
-        }
+    fun getRiskLevel(wbgt: Double): String = when {
+        wbgt < WBGT_LOW -> "Low"
+        wbgt < WBGT_MODERATE -> "Moderate"
+        wbgt < WBGT_HIGH -> "High"
+        wbgt < WBGT_VERY_HIGH -> "Very High"
+        else -> "Extreme"
+    }
 
     suspend fun predictWBGT(
         temps: List<Double>,
@@ -180,6 +187,7 @@ class HeatShieldMLInference @Inject constructor() {
             humidity = (ch * 10).roundToInt() / 10.0,
             windSpeed = (cw * 10).roundToInt() / 10.0,
             wbgt = wbgt,
+            riskLevel = getRiskLevel(wbgt)
         )
     }
 
