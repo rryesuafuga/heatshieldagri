@@ -20,8 +20,8 @@ import kotlin.math.*
  * Runs Random Forest ONNX models via ONNX Runtime's native C++ backend (JNI).
  * Predicts temperature, humidity, wind speed → computes WBGT.
  *
- * Feature engineering matches the Python training pipeline exactly:
- * 17 features = 8 lag + 4 cyclical + 3 rolling stats + 2 delta
+ * 17-feature engineering matches the Python training pipeline exactly:
+ * 8 lag + 4 cyclical time + 3 rolling stats + 2 delta features
  */
 @Singleton
 class HeatShieldMLInference @Inject constructor() {
