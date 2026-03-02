@@ -17,23 +17,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.hilt.navigation.compose.hiltViewModel
 import com.heatshield.agri.data.WbgtCalculator
 import com.heatshield.agri.data.model.HourlyForecast
+import com.heatshield.agri.ui.viewmodel.ScheduleViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScheduleScreen() {
-    var workHoursNeeded by remember { mutableStateOf(8) }
-
-    val forecast = remember {
-        WbgtCalculator.generateDemoForecast(32.0, 65.0)
-    }
-
-    val schedule = remember(workHoursNeeded) {
-        WbgtCalculator.optimizeWorkSchedule(forecast, workHoursNeeded)
-    }
+fun ScheduleScreen(
+    viewModel: ScheduleViewModel = hiltViewModel()
+) {
+    val forecast by viewModel.forecast.collectAsState()
+    val schedule by viewModel.schedule.collectAsState()
+    val dataSource by viewModel.dataSource.collectAsState()
+    val rfDeviation by viewModel.rfDeviation.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val mlLoadProgress by viewModel.mlLoadProgress.collectAsState()
+    val selectedDistrict by viewModel.selectedDistrict.collectAsState()
+    val workHoursNeeded by viewModel.workHoursNeeded.collectAsState()
 
     Scaffold(
         topBar = {
@@ -42,137 +44,298 @@ fun ScheduleScreen() {
                     Column {
                         Text("Work Schedule", fontWeight = FontWeight.Bold)
                         Text(
-                            "AI-optimized safe work windows",
+                            selectedDistrict.name + " — " + when (dataSource) {
+                                "rf-enhanced" -> "RF-Enhanced Forecast"
+                                "physics" -> "Physics Model"
+                                "loading" -> "Loading..."
+                                "error" -> "Offline"
+                                else -> dataSource
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                actions = {
+                    // Data source badge
+                    val (badgeColor, badgeText) = when (dataSource) {
+                        "rf-enhanced" -> Color(0xFF22C55E) to "RF"
+                        "physics" -> Color(0xFF3B82F6) to "Physics"
+                        "loading" -> Color(0xFF9CA3AF) to "..."
+                        else -> Color(0xFFEF4444) to "!"
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = badgeColor.copy(alpha = 0.15f),
+                        modifier = Modifier.padding(end = 8.dp)
+                    ) {
+                        Text(
+                            badgeText,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeColor
                         )
                     }
                 }
             )
         }
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            item { Spacer(modifier = Modifier.height(8.dp)) }
-
-            // Work Hours Selector
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+        if (isLoading && forecast.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        if (mlLoadProgress.isNotEmpty()) mlLoadProgress
+                        else "Loading weather data...",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            "Hours Needed",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item { Spacer(modifier = Modifier.height(8.dp)) }
+
+                // District Selector
+                item {
+                    DistrictSelector(
+                        districts = viewModel.districts,
+                        selected = selectedDistrict,
+                        onSelect = { viewModel.selectDistrict(it) }
+                    )
+                }
+
+                // ML Status Card
+                if (dataSource == "rf-enhanced" && rfDeviation != null) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF22C55E).copy(alpha = 0.08f)
+                            )
                         ) {
-                            listOf(4, 6, 8, 10).forEach { hours ->
-                                FilterChip(
-                                    selected = workHoursNeeded == hours,
-                                    onClick = { workHoursNeeded = hours },
-                                    label = { Text("$hours hrs") },
-                                    modifier = Modifier.weight(1f)
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Psychology,
+                                    contentDescription = null,
+                                    tint = Color(0xFF22C55E),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    "Random Forest ML enhanced — MAE: ${"%.1f".format(rfDeviation)}°C (blended 70% physics + 30% RF)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF166534)
+                                )
+                            }
+                        }
+                    }
+                } else if (dataSource == "physics") {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = Color(0xFF3B82F6).copy(alpha = 0.08f)
+                            )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Science,
+                                    contentDescription = null,
+                                    tint = Color(0xFF3B82F6),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                val text = if (rfDeviation != null) {
+                                    "Physics model (RF deviation ${"%.1f".format(rfDeviation)}°C > 2.0°C threshold)"
+                                } else {
+                                    "Physics model — Open-Meteo NWP forecast with ISO 7243 WBGT"
+                                }
+                                Text(
+                                    text,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF1E40AF)
                                 )
                             }
                         }
                     }
                 }
-            }
 
-            // Summary Cards
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ScheduleSummaryCard(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Default.Schedule,
-                        label = "Safe Hours",
-                        value = "${schedule.totalSafeHours}",
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    ScheduleSummaryCard(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Default.WbSunny,
-                        label = "Start Time",
-                        value = "${schedule.recommendedStart}:00",
-                        color = Color(0xFFF97316)
-                    )
+                // Work Hours Selector
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "Hours Needed",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(4, 6, 8, 10).forEach { hours ->
+                                    FilterChip(
+                                        selected = workHoursNeeded == hours,
+                                        onClick = { viewModel.setWorkHours(hours) },
+                                        label = { Text("$hours hrs") },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-            }
 
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ScheduleSummaryCard(
-                        modifier = Modifier.weight(1f),
-                        icon = Icons.Default.Coffee,
-                        label = "End Time",
-                        value = "${schedule.recommendedEnd}:00",
-                        color = Color(0xFF3B82F6)
-                    )
-                    ProductivityCard(
-                        modifier = Modifier.weight(1f),
-                        score = schedule.productivityScore
-                    )
+                // Summary Cards
+                if (schedule != null) {
+                    val sched = schedule!!
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ScheduleSummaryCard(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Default.Schedule,
+                                label = "Safe Hours",
+                                value = "${sched.totalSafeHours}",
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            ScheduleSummaryCard(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Default.WbSunny,
+                                label = "Start Time",
+                                value = "${sched.recommendedStart}:00",
+                                color = Color(0xFFF97316)
+                            )
+                        }
+                    }
+
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ScheduleSummaryCard(
+                                modifier = Modifier.weight(1f),
+                                icon = Icons.Default.Coffee,
+                                label = "End Time",
+                                value = "${sched.recommendedEnd}:00",
+                                color = Color(0xFF3B82F6)
+                            )
+                            ProductivityCard(
+                                modifier = Modifier.weight(1f),
+                                score = sched.productivityScore
+                            )
+                        }
+                    }
+
+                    // Hourly Breakdown (daylight hours 6-18 only)
+                    item {
+                        Text(
+                            "Hourly Breakdown (6:00 - 18:00)",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    item {
+                        DaylightHourGrid(
+                            forecast = forecast,
+                            safeHours = sched.safeHours
+                        )
+                    }
+
+                    // Recommended Schedule
+                    item {
+                        Text(
+                            "Recommended Daily Schedule",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+
+                    item {
+                        RecommendedScheduleCard(schedule = sched)
+                    }
+
+                    // Break Schedule
+                    item {
+                        BreakScheduleSection(breakSchedule = sched.breakSchedule)
+                    }
                 }
-            }
 
-            // Hour Grid
-            item {
-                Text(
-                    "Hourly Breakdown",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
+                // Warning Signs
+                item {
+                    WarningSignsCard()
+                }
+
+                item { Spacer(modifier = Modifier.height(16.dp)) }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DistrictSelector(
+    districts: List<com.heatshield.agri.data.model.District>,
+    selected: com.heatshield.agri.data.model.District,
+    onSelect: (com.heatshield.agri.data.model.District) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            value = "${selected.name}, ${selected.region}",
+            onValueChange = {},
+            readOnly = true,
+            label = { Text("District") },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            districts.forEach { district ->
+                DropdownMenuItem(
+                    text = { Text("${district.name} (${district.region})") },
+                    onClick = {
+                        onSelect(district)
+                        expanded = false
+                    }
                 )
             }
-
-            item {
-                HourGrid(
-                    forecast = forecast,
-                    safeHours = schedule.safeHours
-                )
-            }
-
-            // Recommended Schedule
-            item {
-                Text(
-                    "Recommended Daily Schedule",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-
-            item {
-                RecommendedScheduleCard(schedule = schedule)
-            }
-
-            // Break Schedule
-            item {
-                BreakScheduleSection(breakSchedule = schedule.breakSchedule)
-            }
-
-            // Warning Signs
-            item {
-                WarningSignsCard()
-            }
-
-            item { Spacer(modifier = Modifier.height(16.dp)) }
         }
     }
 }
@@ -261,14 +424,17 @@ fun ProductivityCard(
 }
 
 @Composable
-fun HourGrid(
+fun DaylightHourGrid(
     forecast: List<HourlyForecast>,
     safeHours: List<Int>
 ) {
+    // Filter to daylight hours only (6-18)
+    val daylightHours = forecast.filter { it.hour in 6 until 18 }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        // Morning hours (0-11)
+        // Morning hours (6-11)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(forecast.take(12)) { hour ->
+            items(daylightHours.filter { it.hour < 12 }) { hour ->
                 HourChip(
                     hour = hour.hour,
                     wbgt = hour.wbgt,
@@ -277,9 +443,9 @@ fun HourGrid(
             }
         }
 
-        // Afternoon hours (12-23)
+        // Afternoon hours (12-17)
         LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            items(forecast.drop(12)) { hour ->
+            items(daylightHours.filter { it.hour >= 12 }) { hour ->
                 HourChip(
                     hour = hour.hour,
                     wbgt = hour.wbgt,
@@ -304,13 +470,13 @@ fun HourChip(
             .size(48.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(
-                if (isRecommended) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-                else riskColor.copy(alpha = 0.1f)
+                if (isRecommended) Color(0xFF22C55E).copy(alpha = 0.2f)
+                else Color(0xFF9CA3AF).copy(alpha = 0.1f)
             )
             .then(
                 if (isRecommended) Modifier.border(
                     2.dp,
-                    MaterialTheme.colorScheme.primary,
+                    Color(0xFF22C55E),
                     RoundedCornerShape(8.dp)
                 )
                 else Modifier
@@ -328,7 +494,7 @@ fun HourChip(
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
                 color = if (isRecommended)
-                    MaterialTheme.colorScheme.primary
+                    Color(0xFF22C55E)
                 else
                     riskColor
             )
@@ -350,11 +516,11 @@ fun RecommendedScheduleCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // Morning session
-            if (schedule.recommendedStart < 10) {
+            if (schedule.recommendedStart < 11) {
                 WorkSessionRow(
                     icon = Icons.Default.WbSunny,
                     title = "Morning Work",
-                    timeRange = "${schedule.recommendedStart}:00 - ${minOf(10, schedule.recommendedEnd)}:00",
+                    timeRange = "${schedule.recommendedStart}:00 - ${minOf(11, schedule.recommendedEnd)}:00",
                     color = Color(0xFF22C55E)
                 )
             }
@@ -367,11 +533,11 @@ fun RecommendedScheduleCard(
                 color = Color(0xFF9CA3AF)
             )
 
-            // Evening session
+            // Afternoon session
             if (schedule.recommendedEnd > 15) {
                 WorkSessionRow(
                     icon = Icons.Default.WbTwilight,
-                    title = "Evening Work",
+                    title = "Afternoon Work",
                     timeRange = "${maxOf(15, schedule.recommendedStart)}:00 - ${schedule.recommendedEnd}:00",
                     color = Color(0xFF3B82F6)
                 )
