@@ -291,7 +291,7 @@ export default function Schedule() {
           </div>
           <p className="text-gray-500 mt-1">
             {mlActive
-              ? 'ML-optimized safe work windows — ONNX Random Forest models + Open-Meteo weather data'
+              ? 'RF-predicted weather → physics-based WBGT → schedule optimization'
               : 'Simulated forecast — ML models loading…'}
           </p>
           {mlError && (

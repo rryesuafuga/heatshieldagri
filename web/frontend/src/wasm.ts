@@ -267,8 +267,8 @@ export function optimizeWorkSchedule(
   return {
     safe_hours: safeHours,
     total_safe_hours: safeHours.length,
-    recommended_start: safeHours[0] || 6,
-    recommended_end: safeHours[safeHours.length - 1] || 17,
+    recommended_start: safeHours[0] ?? 6,
+    recommended_end: safeHours[safeHours.length - 1] ?? 17,
     break_schedule: breakSchedule,
     productivity_score: productivityScore,
   };
