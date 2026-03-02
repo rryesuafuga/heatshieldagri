@@ -107,8 +107,8 @@ function ScheduleVisualization({
               return (
                 <Cell
                   key={`cell-${index}`}
-                  fill={entry.isRecommended ? '#22c55e' : risk.color}
-                  opacity={entry.isRecommended ? 1 : 0.6}
+                  fill={entry.isRecommended ? '#22c55e' : '#9ca3af'}
+                  opacity={entry.isRecommended ? 1 : 0.5}
                 />
               );
             })}
@@ -332,14 +332,14 @@ export default function Schedule() {
             <div className="card text-center">
               <Sun className="h-8 w-8 text-orange-500 mx-auto mb-2" />
               <div className="text-3xl font-bold text-gray-900">
-                {schedule.recommended_start}:00
+                {schedule.recommended_start.toString().padStart(2, '0')}:00
               </div>
               <div className="text-sm text-gray-500">Start Time</div>
             </div>
             <div className="card text-center">
               <Coffee className="h-8 w-8 text-blue-500 mx-auto mb-2" />
               <div className="text-3xl font-bold text-gray-900">
-                {schedule.recommended_end}:00
+                {schedule.recommended_end.toString().padStart(2, '0')}:00
               </div>
               <div className="text-sm text-gray-500">End Time</div>
             </div>
@@ -412,28 +412,34 @@ export default function Schedule() {
                 Recommended Daily Schedule
               </h2>
               <div className="space-y-3">
-                {schedule.recommended_start < 10 && (
-                  <WorkBlock
-                    title="Morning Work Session"
-                    startHour={schedule.recommended_start}
-                    endHour={Math.min(10, schedule.recommended_end)}
-                    type="work"
-                  />
-                )}
-                <WorkBlock
-                  title="Midday Rest Period"
-                  startHour={11}
-                  endHour={15}
-                  type="rest"
-                />
-                {schedule.recommended_end > 15 && (
-                  <WorkBlock
-                    title="Evening Work Session"
-                    startHour={Math.max(15, schedule.recommended_start)}
-                    endHour={schedule.recommended_end}
-                    type="work"
-                  />
-                )}
+                {(() => {
+                  // Build contiguous work/rest blocks from the actual safe_hours
+                  const safe = new Set(schedule.safe_hours);
+                  const blocks: { title: string; start: number; end: number; type: 'work' | 'rest' }[] = [];
+                  let i = 0;
+                  while (i < 24) {
+                    const isWork = safe.has(i);
+                    const blockStart = i;
+                    while (i < 24 && safe.has(i) === isWork) i++;
+                    if (isWork) {
+                      blocks.push({ title: `Work Session`, start: blockStart, end: i, type: 'work' });
+                    } else if (i - blockStart >= 2) {
+                      blocks.push({ title: `Rest Period`, start: blockStart, end: i, type: 'rest' });
+                    }
+                  }
+                  // Label work blocks sequentially
+                  const labels = ['Early', 'Morning', 'Afternoon', 'Evening'];
+                  let workIdx = 0;
+                  return blocks.map((b, idx) => (
+                    <WorkBlock
+                      key={idx}
+                      title={b.type === 'work' ? `${labels[workIdx++] || ''} Work Session`.trim() : b.title}
+                      startHour={b.start}
+                      endHour={b.end}
+                      type={b.type}
+                    />
+                  ));
+                })()}
               </div>
             </div>
 
