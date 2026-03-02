@@ -8,7 +8,6 @@ import com.heatshield.agri.data.WbgtCalculator
 import com.heatshield.agri.data.ml.HeatShieldMLInference
 import com.heatshield.agri.data.model.District
 import com.heatshield.agri.data.model.HourlyForecast
-import com.heatshield.agri.data.model.WorkSchedule
 import com.heatshield.agri.data.repository.WeatherRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -19,28 +18,29 @@ import javax.inject.Inject
 import kotlin.math.abs
 
 /**
+ * Physics-first architecture with Random Forest validation for the Forecast tab.
  *
  * 1. Fetch real Open-Meteo NWP forecast (with solar radiation) → compute physics WBGT
- * 4. Optimize work schedule for daylight hours (06:00-18:00)
+ * 2. If RF models loaded and history available, run RF predictions
+ * 3. Compare RF vs physics (MAE threshold) → blend only if RF within 2°C
+ * 4. Show 48-hour forecast (today + tomorrow) with daylight hour filtering
  */
 @HiltViewModel
-class ScheduleViewModel @Inject constructor(
+class ForecastViewModel @Inject constructor(
     application: Application,
     private val weatherRepository: WeatherRepository,
     private val mlInference: HeatShieldMLInference
 ) : AndroidViewModel(application) {
 
     companion object {
-        private const val TAG = "ScheduleVM"
+        private const val TAG = "ForecastVM"
+        private const val RF_DEVIATION_THRESHOLD = 2.0
         private const val PHYSICS_WEIGHT = 0.7
         private const val RF_WEIGHT = 0.3
     }
 
     private val _forecast = MutableStateFlow<List<HourlyForecast>>(emptyList())
     val forecast: StateFlow<List<HourlyForecast>> = _forecast.asStateFlow()
-
-    private val _schedule = MutableStateFlow<WorkSchedule?>(null)
-    val schedule: StateFlow<WorkSchedule?> = _schedule.asStateFlow()
 
     private val _dataSource = MutableStateFlow("loading")
     val dataSource: StateFlow<String> = _dataSource.asStateFlow()
@@ -56,9 +56,6 @@ class ScheduleViewModel @Inject constructor(
 
     private val _selectedDistrict = MutableStateFlow(WeatherRepository.UGANDA_DISTRICTS.first())
     val selectedDistrict: StateFlow<District> = _selectedDistrict.asStateFlow()
-
-    private val _workHoursNeeded = MutableStateFlow(8)
-    val workHoursNeeded: StateFlow<Int> = _workHoursNeeded.asStateFlow()
 
     val districts = WeatherRepository.UGANDA_DISTRICTS
 
@@ -84,14 +81,6 @@ class ScheduleViewModel @Inject constructor(
     fun selectDistrict(district: District) {
         _selectedDistrict.value = district
         loadData()
-    }
-
-    fun setWorkHours(hours: Int) {
-        _workHoursNeeded.value = hours
-        val currentForecast = _forecast.value
-        if (currentForecast.isNotEmpty()) {
-            _schedule.value = WbgtCalculator.optimizeWorkSchedule(currentForecast, hours)
-        }
     }
 
     fun refresh() {
@@ -134,7 +123,7 @@ class ScheduleViewModel @Inject constructor(
                                     temps = data.historyTemps,
                                     hums = data.historyHums,
                                     winds = data.historyWinds,
-                                    steps = 24
+                                    steps = minOf(48, physicsForecast.size)
                                 )
 
                                 val comparableHours = minOf(physicsForecast.size, rfForecasts.size)
@@ -161,6 +150,7 @@ class ScheduleViewModel @Inject constructor(
                                         source = "rf-enhanced"
                                         Log.d(TAG, "RF enhancement applied (MAE=${"%.2f".format(mae)}°C)")
                                     } else {
+                                        Log.w(TAG, "RF rejected: MAE ${"%.2f".format(mae)}°C > threshold")
                                     }
                                 }
                             } catch (e: Exception) {
@@ -170,9 +160,6 @@ class ScheduleViewModel @Inject constructor(
 
                         _forecast.value = finalForecast
                         _dataSource.value = source
-                        _schedule.value = WbgtCalculator.optimizeWorkSchedule(
-                            finalForecast, _workHoursNeeded.value
-                        )
                     },
                     onFailure = { error ->
                         Log.e(TAG, "Weather fetch failed: ${error.message}")

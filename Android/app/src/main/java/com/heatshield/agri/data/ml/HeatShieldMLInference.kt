@@ -36,17 +36,12 @@ class HeatShieldMLInference @Inject constructor() {
     companion object {
         private const val REQUIRED_HISTORY = 73 // max lag (72) + 1
         private val MODEL_NAMES = listOf("temperature", "humidity", "windspeed")
-
-        // WBGT thresholds (ISO 7243)
         private const val WBGT_LOW = 26.0
         private const val WBGT_MODERATE = 28.0
         private const val WBGT_HIGH = 30.0
         private const val WBGT_VERY_HIGH = 32.0
     }
 
-    /**
-     * Load ONNX models from assets. Safe to call multiple times.
-     */
     suspend fun loadModels(
         context: Context,
         onProgress: ((loaded: Int, total: Int, name: String) -> Unit)? = null
@@ -64,7 +59,6 @@ class HeatShieldMLInference @Inject constructor() {
                         it.readBytes()
                     }
                     val opts = OrtSession.SessionOptions().apply {
-                        setIntraOpNumThreads(2) // Use 2 threads for RF inference
                         setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
                     }
                     sessions[name] = env.createSession(modelBytes, opts)
@@ -75,9 +69,6 @@ class HeatShieldMLInference @Inject constructor() {
         }
     }
 
-    /**
-     * Run single model prediction.
-     */
     private suspend fun predict1(name: String, features: FloatArray): Float {
         return mutex.withLock {
             withContext(Dispatchers.IO) {
@@ -95,14 +86,7 @@ class HeatShieldMLInference @Inject constructor() {
                     session.run(mapOf(inputName to t)).use { result ->
                         val output = result.get(0).value
                         when (output) {
-                            is Array<*> -> (output[0] as FloatArray)[0]
-                            is FloatArray -> output[0]
-                            else -> {
-                                // Handle potential Long/Double array outputs from RF
-                                val arr = result.get(0).value
-                                when (arr) {
                                     is Array<*> -> {
-                                        val inner = arr[0]
                                         when (inner) {
                                             is FloatArray -> inner[0]
                                             is DoubleArray -> inner[0].toFloat()
@@ -110,9 +94,6 @@ class HeatShieldMLInference @Inject constructor() {
                                             else -> (inner as Number).toFloat()
                                         }
                                     }
-                                    else -> (arr as Number).toFloat()
-                                }
-                            }
                         }
                     }
                 }
@@ -121,8 +102,6 @@ class HeatShieldMLInference @Inject constructor() {
     }
 
     // ---- Feature Engineering (must match Python training pipeline exactly) ----
-    // 17 features in this exact order:
-    //   lag_1, lag_2, lag_3, lag_6, lag_12, lag_24, lag_48, lag_72,
     //   hour_sin, hour_cos, doy_sin, doy_cos,
     //   rolling_mean_24h, rolling_mean_72h, rolling_std_24h,
     //   delta_1h, delta_24h
@@ -135,7 +114,6 @@ class HeatShieldMLInference @Inject constructor() {
         val n = history.size
         val f = FloatArray(17)
 
-        // Lag features
         f[0] = history[n - 1].toFloat()
         f[1] = history[n - 2].toFloat()
         f[2] = history[n - 3].toFloat()
@@ -145,13 +123,11 @@ class HeatShieldMLInference @Inject constructor() {
         f[6] = history[n - 48].toFloat()
         f[7] = history[n - 72].toFloat()
 
-        // Cyclical time encoding
         f[8] = sin(2 * PI * currentHour / 24.0).toFloat()
         f[9] = cos(2 * PI * currentHour / 24.0).toFloat()
         f[10] = sin(2 * PI * dayOfYear / 365.25).toFloat()
         f[11] = cos(2 * PI * dayOfYear / 365.25).toFloat()
 
-        // Rolling statistics
         val last24 = history.subList(n - 24, n)
         val last72 = history.subList(n - 72, n)
         val mean24 = last24.average()
@@ -159,51 +135,28 @@ class HeatShieldMLInference @Inject constructor() {
         f[13] = last72.average().toFloat()
         f[14] = sqrt(last24.sumOf { (it - mean24).pow(2) } / 24.0).toFloat()
 
-        // Delta features
         f[15] = (history[n - 1] - history[n - 2]).toFloat()
         f[16] = (history[n - 1] - history[n - 24]).toFloat()
 
         return f
     }
 
-    // ---- WBGT Calculation ----
-
-    /**
-     * Simplified WBGT for ML predictions (same as web ml-inference.ts).
-     * Uses Stull (2011) wet-bulb + simplified globe temp.
-     */
     private fun calculateWBGT(tempC: Double, humPct: Double): Double {
         val t = tempC
         val rh = humPct
-        // Stull (2011) psychrometric wet-bulb approximation
         val tnwb = t * atan(0.151977 * sqrt(rh + 8.313659)) +
                 atan(t + rh) - atan(rh - 1.676331) +
                 0.00391838 * rh.pow(1.5) * atan(0.023101 * rh) - 4.686035
-        val tg = t + 2.0 // simplified globe temperature
         return (0.7 * tnwb + 0.2 * tg + 0.1 * t).let { (it * 10).roundToInt() / 10.0 }
     }
 
-    fun getRiskLevel(wbgt: Double): String {
-        return when {
             wbgt < WBGT_LOW -> "Low"
             wbgt < WBGT_MODERATE -> "Moderate"
             wbgt < WBGT_HIGH -> "High"
             wbgt < WBGT_VERY_HIGH -> "Very High"
             else -> "Extreme"
         }
-    }
 
-    fun workCapacityPercent(wbgt: Double): Int {
-        if (wbgt <= 18.0) return 100
-        if (wbgt >= 40.0) return 22
-        return (100 - (wbgt - 18) * (78.0 / 22.0)).roundToInt()
-    }
-
-    // ---- Prediction API ----
-
-    /**
-     * Predict WBGT for a single time step.
-     */
     suspend fun predictWBGT(
         temps: List<Double>,
         hums: List<Double>,
@@ -220,24 +173,16 @@ class HeatShieldMLInference @Inject constructor() {
         val ct = t.toDouble().coerceIn(-10.0, 50.0)
         val ch = h.toDouble().coerceIn(0.0, 100.0)
         val cw = w.toDouble().coerceIn(0.0, 30.0)
-
         val wbgt = calculateWBGT(ct, ch)
-        val risk = getRiskLevel(wbgt)
 
         return WBGTForecast(
             temperature = (ct * 10).roundToInt() / 10.0,
             humidity = (ch * 10).roundToInt() / 10.0,
             windSpeed = (cw * 10).roundToInt() / 10.0,
             wbgt = wbgt,
-            riskLevel = risk,
-            workCapacityPercent = workCapacityPercent(wbgt)
         )
     }
 
-    /**
-     * Multi-step autoregressive forecasting (up to 72 hours).
-     * Each step feeds its prediction back as history for the next step.
-     */
     suspend fun predictMultiStep(
         temps: List<Double>,
         hums: List<Double>,
@@ -275,9 +220,6 @@ class HeatShieldMLInference @Inject constructor() {
         return forecasts
     }
 
-    /**
-     * Release all ONNX sessions and free native memory.
-     */
     fun dispose() {
         sessions.values.forEach { it.close() }
         sessions.clear()
@@ -287,15 +229,11 @@ class HeatShieldMLInference @Inject constructor() {
     }
 }
 
-/**
- * ML forecast result for a single time step.
- */
 data class WBGTForecast(
     val temperature: Double,
     val humidity: Double,
     val windSpeed: Double,
     val wbgt: Double,
     val riskLevel: String,
-    val workCapacityPercent: Int,
     val hour: Int = 0
 )

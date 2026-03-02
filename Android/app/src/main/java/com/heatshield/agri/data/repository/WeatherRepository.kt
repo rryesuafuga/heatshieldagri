@@ -1,7 +1,6 @@
 package com.heatshield.agri.data.repository
 
 import com.heatshield.agri.data.WbgtCalculator
-import com.heatshield.agri.data.api.HistoricalWeatherResponse
 import com.heatshield.agri.data.api.WeatherApiService
 import com.heatshield.agri.data.api.WeatherResponse
 import com.heatshield.agri.data.model.District
@@ -87,76 +86,6 @@ class WeatherRepository @Inject constructor(
         )
     }
 
-    /**
-     * Fetch weather with 4 days of history for ML feature engineering.
-     * Returns physics-based forecast (today's 24h) + history arrays for RF models.
-     */
-    suspend fun getWeatherWithHistory(
-        lat: Double,
-        lon: Double
-    ): Result<WeatherHistoryData> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val response = weatherApiService.getWeatherWithHistory(lat, lon)
-                val data = transformHistoricalResponse(response)
-                Result.success(data)
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
-        }
-    }
-
-    private fun transformHistoricalResponse(response: HistoricalWeatherResponse): WeatherHistoryData {
-        val times = response.hourly.time
-        val temps = response.hourly.temperature_2m
-        val hums = response.hourly.relative_humidity_2m
-        val winds = response.hourly.wind_speed_10m
-        val solars = response.hourly.shortwave_radiation
-
-        // Find today's start index (past_days=4, so 96 hours of history)
-        val totalHours = times.size
-        val todayStartIndex = 96 // 4 days * 24 hours
-
-        // Build physics-based forecast for today's 24 hours
-        val physicsForecast = (0 until 24).mapNotNull { h ->
-            val idx = todayStartIndex + h
-            if (idx >= totalHours) return@mapNotNull null
-
-            val windMs = winds[idx] / 3.6 // km/h → m/s
-            val solar = solars?.getOrNull(idx) ?: estimateSolarRadiationForHour(h)
-
-            val wbgtResult = WbgtCalculator.calculateWbgt(
-                temperature = temps[idx],
-                humidity = hums[idx].toDouble(),
-                windSpeed = windMs,
-                solarRadiation = solar
-            )
-
-            HourlyForecast(
-                hour = h,
-                time = times[idx],
-                temperature = temps[idx],
-                humidity = hums[idx],
-                windSpeed = windMs,
-                solarRadiation = solar,
-                wbgt = wbgtResult.wbgt,
-                riskLevel = wbgtResult.riskLevel
-            )
-        }
-
-        // Build ML history arrays (past data, converted to proper units)
-        val historyTemps = temps.take(todayStartIndex).map { it }
-        val historyHums = hums.take(todayStartIndex).map { it.toDouble() }
-        val historyWinds = winds.take(todayStartIndex).map { it / 3.6 } // km/h → m/s
-
-        return WeatherHistoryData(
-            physicsForecast = physicsForecast,
-            historyTemps = historyTemps,
-            historyHums = historyHums,
-            historyWinds = historyWinds
-        )
-    }
-
     private fun estimateSolarRadiation(): Double {
         val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
         return estimateSolarRadiationForHour(hour)
@@ -190,13 +119,3 @@ class WeatherRepository @Inject constructor(
         )
     }
 }
-
-/**
- * Weather data including historical arrays for ML feature engineering.
- */
-data class WeatherHistoryData(
-    val physicsForecast: List<HourlyForecast>,
-    val historyTemps: List<Double>,
-    val historyHums: List<Double>,
-    val historyWinds: List<Double>
-)
