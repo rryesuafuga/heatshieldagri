@@ -6,6 +6,9 @@ authors = ["HeatShield Agri Team"]
 description = "WebAssembly module for WBGT calculations and heat stress prediction"
 license = "MIT"
 
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 

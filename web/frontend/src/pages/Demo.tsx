@@ -20,14 +20,11 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { initWasm, wasmReady, wasm } from '../wasm-runtime';
 import {
-  calculateWbgt,
-  calculateWetBulb,
-  calculateHeatIndex,
+  calculateWbgt as jsCalculateWbgt,
   classifyRisk,
   getUgandaDistricts,
-  optimizeWorkSchedule,
-  generateDemoForecast,
   WbgtResult,
 } from '../wasm';
 
@@ -88,17 +85,29 @@ function WBGTCalculator() {
   const [heatIndex, setHeatIndex] = useState(0);
 
   useEffect(() => {
-    const wbgtResult = calculateWbgt(temperature, humidity, windSpeed, solarRadiation);
-    setResult(wbgtResult);
-    setWetBulb(calculateWetBulb(temperature, humidity));
-    setHeatIndex(calculateHeatIndex(temperature, humidity));
+    if (!wasmReady()) return;
+    const wasmResult = wasm.calculate_wbgt(temperature, humidity, windSpeed, solarRadiation);
+    setResult({
+      wbgt: wasmResult.wbgt,
+      risk_level: wasmResult.risk_level,
+      risk_code: wasmResult.risk_code,
+      recommendation: wasmResult.recommendation,
+      color: wasmResult.color,
+    });
+    setWetBulb(wasm.calculate_wet_bulb(temperature, humidity));
+    setHeatIndex(wasm.calculate_heat_index(temperature, humidity));
   }, [temperature, humidity, windSpeed, solarRadiation]);
 
   return (
     <div className="card">
-      <h3 className="text-lg font-semibold text-gray-900 mb-6">
-        WBGT Calculator (Powered by WebAssembly)
-      </h3>
+      <div className="flex items-center gap-2 mb-6">
+        <h3 className="text-lg font-semibold text-gray-900">
+          WBGT Calculator
+        </h3>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">
+          Rust WebAssembly
+        </span>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Inputs */}
@@ -224,14 +233,20 @@ function DistrictSimulation() {
   }, [isRunning]);
 
   useEffect(() => {
+    if (!wasmReady()) return;
     const baseTemp = 28 + selectedDistrictId * 0.5;
     const humidity = 60 + (selectedDistrictId % 5) * 3;
-    const forecast = generateDemoForecast(baseTemp, humidity);
 
-    const data = forecast.slice(0, currentHour + 1).map((f) => ({
-      hour: `${f.hour.toString().padStart(2, '0')}:00`,
-      wbgt: f.wbgt,
-    }));
+    // Call the real Rust WASM function
+    const forecast = wasm.generate_demo_forecast(baseTemp, humidity);
+    const data = [];
+    for (let i = 0; i <= currentHour && i < forecast.length; i++) {
+      const f = forecast[i];
+      data.push({
+        hour: `${f.hour.toString().padStart(2, '0')}:00`,
+        wbgt: f.wbgt,
+      });
+    }
 
     setSimulationData(data);
   }, [selectedDistrictId, currentHour]);
@@ -249,9 +264,14 @@ function DistrictSimulation() {
 
   return (
     <div className="card">
-      <h3 className="text-lg font-semibold text-gray-900 mb-6">
-        24-Hour District Simulation
-      </h3>
+      <div className="flex items-center gap-2 mb-6">
+        <h3 className="text-lg font-semibold text-gray-900">
+          24-Hour District Simulation
+        </h3>
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">
+          Rust WebAssembly
+        </span>
+      </div>
 
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
         <select
@@ -341,32 +361,53 @@ function PerformanceDemo() {
   const [iterations, setIterations] = useState(1000);
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState<{
-    time: number;
-    opsPerSecond: number;
+    wasmTime: number;
+    wasmOps: number;
+    jsTime: number;
+    jsOps: number;
+    speedup: string;
     calculations: number;
   } | null>(null);
 
   const runBenchmark = () => {
+    if (!wasmReady()) return;
     setIsRunning(true);
 
     setTimeout(() => {
-      const startTime = performance.now();
+      // Generate test inputs once
+      const inputs = Array.from({ length: iterations }, () => ({
+        temp: 25 + Math.random() * 15,
+        hum: 40 + Math.random() * 50,
+        wind: Math.random() * 10,
+        solar: Math.random() * 1000,
+      }));
 
-      for (let i = 0; i < iterations; i++) {
-        const temp = 25 + Math.random() * 15;
-        const humidity = 40 + Math.random() * 50;
-        const wind = Math.random() * 10;
-        const solar = Math.random() * 1000;
-        calculateWbgt(temp, humidity, wind, solar);
+      // Benchmark WASM (Rust)
+      const wasmStart = performance.now();
+      for (const { temp, hum, wind, solar } of inputs) {
+        wasm.calculate_wbgt(temp, hum, wind, solar);
       }
+      const wasmEnd = performance.now();
+      const wasmDuration = wasmEnd - wasmStart;
+      const wasmOps = (iterations / wasmDuration) * 1000;
 
-      const endTime = performance.now();
-      const duration = endTime - startTime;
-      const opsPerSecond = (iterations / duration) * 1000;
+      // Benchmark JS (the pure-JS fallback from wasm.ts)
+      const jsStart = performance.now();
+      for (const { temp, hum, wind, solar } of inputs) {
+        jsCalculateWbgt(temp, hum, wind, solar);
+      }
+      const jsEnd = performance.now();
+      const jsDuration = jsEnd - jsStart;
+      const jsOps = (iterations / jsDuration) * 1000;
+
+      const speedup = (jsDuration / wasmDuration).toFixed(1);
 
       setResults({
-        time: duration,
-        opsPerSecond,
+        wasmTime: wasmDuration,
+        wasmOps,
+        jsTime: jsDuration,
+        jsOps,
+        speedup,
         calculations: iterations,
       });
       setIsRunning(false);
@@ -375,11 +416,13 @@ function PerformanceDemo() {
 
   return (
     <div className="card">
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">
-        WebAssembly Performance Demo
-      </h3>
+      <div className="flex items-center gap-2 mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          Performance Comparison: WASM vs JavaScript
+        </h3>
+      </div>
       <p className="text-gray-600 mb-6">
-        Test the performance of WBGT calculations running in WebAssembly
+        Compare Rust WebAssembly against pure JavaScript for WBGT calculation speed
       </p>
 
       <div className="flex items-center space-x-4 mb-6">
@@ -400,7 +443,7 @@ function PerformanceDemo() {
         </div>
         <button
           onClick={runBenchmark}
-          disabled={isRunning}
+          disabled={isRunning || !wasmReady()}
           className="btn-primary flex items-center space-x-2 mt-6"
         >
           <Zap className={`h-4 w-4 ${isRunning ? 'animate-pulse' : ''}`} />
@@ -409,27 +452,31 @@ function PerformanceDemo() {
       </div>
 
       {results && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="p-4 bg-purple-50 rounded-lg text-center">
+              <div className="text-xs text-purple-600 font-semibold mb-2">Rust WASM</div>
+              <div className="text-2xl font-bold text-purple-700">
+                {results.wasmOps.toFixed(0)}
+              </div>
+              <div className="text-sm text-purple-600">ops/sec</div>
+              <div className="text-xs text-purple-500 mt-1">{results.wasmTime.toFixed(2)} ms</div>
+            </div>
+            <div className="p-4 bg-gray-50 rounded-lg text-center">
+              <div className="text-xs text-gray-600 font-semibold mb-2">JavaScript</div>
+              <div className="text-2xl font-bold text-gray-700">
+                {results.jsOps.toFixed(0)}
+              </div>
+              <div className="text-sm text-gray-600">ops/sec</div>
+              <div className="text-xs text-gray-500 mt-1">{results.jsTime.toFixed(2)} ms</div>
+            </div>
+          </div>
           <div className="p-4 bg-green-50 rounded-lg text-center">
-            <Gauge className="h-6 w-6 text-green-600 mx-auto mb-2" />
-            <div className="text-2xl font-bold text-green-700">
-              {results.opsPerSecond.toFixed(0)}
+            <div className="text-sm text-green-600">WASM speedup</div>
+            <div className="text-3xl font-bold text-green-700">{results.speedup}x</div>
+            <div className="text-xs text-green-600 mt-1">
+              {results.calculations.toLocaleString()} WBGT calculations each
             </div>
-            <div className="text-sm text-green-600">Operations/sec</div>
-          </div>
-          <div className="p-4 bg-blue-50 rounded-lg text-center">
-            <Zap className="h-6 w-6 text-blue-600 mx-auto mb-2" />
-            <div className="text-2xl font-bold text-blue-700">
-              {results.time.toFixed(2)}
-            </div>
-            <div className="text-sm text-blue-600">Milliseconds</div>
-          </div>
-          <div className="p-4 bg-purple-50 rounded-lg text-center">
-            <Thermometer className="h-6 w-6 text-purple-600 mx-auto mb-2" />
-            <div className="text-2xl font-bold text-purple-700">
-              {results.calculations.toLocaleString()}
-            </div>
-            <div className="text-sm text-purple-600">Calculations</div>
           </div>
         </div>
       )}
@@ -438,30 +485,66 @@ function PerformanceDemo() {
 }
 
 export default function Demo() {
+  const [wasmLoaded, setWasmLoaded] = useState(false);
+  const [wasmError, setWasmError] = useState<string | null>(null);
+
+  useEffect(() => {
+    initWasm()
+      .then(() => setWasmLoaded(true))
+      .catch((err) => {
+        console.error('[Demo] WASM init failed:', err);
+        setWasmError(err.message || 'Failed to load WebAssembly module');
+      });
+  }, []);
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Interactive Demo</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold text-gray-900">Interactive Demo</h1>
+          {wasmLoaded ? (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-100 text-purple-800">
+              WebAssembly loaded (174 KB)
+            </span>
+          ) : wasmError ? (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+              WASM failed
+            </span>
+          ) : (
+            <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+              Loading WASM...
+            </span>
+          )}
+        </div>
         <p className="text-gray-500 mt-1">
-          Explore HeatShield Agri's WBGT calculations and predictions
+          WBGT calculations powered by Rust compiled to WebAssembly (heatshield-wasm crate)
         </p>
       </div>
 
-      <div className="space-y-8">
-        <WBGTCalculator />
-        <DistrictSimulation />
-        <PerformanceDemo />
-      </div>
+      {wasmError && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
+          WebAssembly failed to load: {wasmError}. Calculations will not be available.
+        </div>
+      )}
+
+      {wasmLoaded && (
+        <div className="space-y-8">
+          <WBGTCalculator />
+          <DistrictSimulation />
+          <PerformanceDemo />
+        </div>
+      )}
 
       {/* Info */}
       <div className="mt-8 p-4 bg-gray-50 border border-gray-200 rounded-xl">
         <h4 className="font-semibold text-gray-900 mb-2">About This Demo</h4>
         <p className="text-gray-600 text-sm">
-          This demo showcases the HeatShield Agri web platform powered by Rust compiled to
-          WebAssembly. The WBGT calculations run directly in your browser at near-native
-          speed. In production, this same code runs server-side for prediction generation
-          and client-side for real-time interactivity.
+          All WBGT calculations on this page are performed by the <code>heatshield-wasm</code> Rust
+          crate, compiled to WebAssembly via <code>wasm-pack</code>. The 174 KB <code>.wasm</code> binary
+          runs Stull (2011) wet-bulb, Liljegren (2008) globe temperature, and ISO 7243 WBGT
+          formulas at near-native speed. The performance benchmark compares this against the
+          equivalent pure-JavaScript implementation.
         </p>
       </div>
     </div>
