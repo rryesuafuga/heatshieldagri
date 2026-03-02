@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   BarChart,
   Bar,
@@ -12,15 +12,16 @@ import {
 import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2, Cpu } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useHeatShieldML } from '../hooks/useHeatShieldML';
-import type { WBGTForecast } from '../ml-inference';
 import {
-  generateDemoForecast,
+  calculateWbgt,
   optimizeWorkSchedule,
   classifyRisk,
   getUgandaDistricts,
   HourlyForecast,
   WorkSchedule,
 } from '../wasm';
+
+// ---- Helpers ----
 
 function TimeSlot({
   hour,
@@ -96,7 +97,7 @@ function ScheduleVisualization({
               border: '1px solid #e5e7eb',
               borderRadius: '8px',
             }}
-            formatter={(value: number, name: string, props: any) => [
+            formatter={(value: number, _name: string, props: any) => [
               `${value.toFixed(1)}°C`,
               props.payload.isRecommended ? 'WBGT (Recommended)' : 'WBGT',
             ]}
@@ -107,8 +108,8 @@ function ScheduleVisualization({
               return (
                 <Cell
                   key={`cell-${index}`}
-                  fill={entry.isRecommended ? '#22c55e' : '#9ca3af'}
-                  opacity={entry.isRecommended ? 1 : 0.5}
+                  fill={entry.isRecommended ? '#22c55e' : risk.color}
+                  opacity={entry.isRecommended ? 1 : 0.6}
                 />
               );
             })}
@@ -159,15 +160,21 @@ function WorkBlock({
   );
 }
 
-// ---- Fetch recent weather history from Open-Meteo for ML seed data ----
+// ---- Data fetching ----
 
-async function fetchWeatherHistory(
+/** Fetch today's 24-hour weather from Open-Meteo (NWP physics forecast + history for ML seed) */
+async function fetchWeatherData(
   lat: number, lon: number,
-): Promise<{ temps: number[]; hums: number[]; winds: number[] }> {
+): Promise<{
+  /** Today's 24-hour physics-based forecast (hours 0-23) */
+  physicsForecast: HourlyForecast[];
+  /** ML seed data: past 4+ days of hourly history */
+  history: { temps: number[]; hums: number[]; winds: number[] } | null;
+}> {
   const url = `https://api.open-meteo.com/v1/forecast?` +
     `latitude=${lat}&longitude=${lon}` +
-    `&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m` +
-    `&past_days=4&forecast_days=1` +
+    `&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m,shortwave_radiation` +
+    `&past_days=4&forecast_days=2` +
     `&timezone=Africa/Kampala`;
 
   const resp = await fetch(url);
@@ -175,90 +182,157 @@ async function fetchWeatherHistory(
   const data = await resp.json();
   const hourly = data.hourly;
 
-  const validIndices: number[] = [];
-  for (let i = 0; i < hourly.time.length; i++) {
+  // Parse all timestamps
+  const times: Date[] = hourly.time.map((t: string) => new Date(t));
+
+  // Find today's date boundaries (hours 0-23)
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+
+  // Build today's physics forecast (24 hours)
+  const physicsForecast: HourlyForecast[] = [];
+  for (let i = 0; i < times.length; i++) {
+    const timeStr = hourly.time[i]; // "YYYY-MM-DDTHH:MM"
+    if (!timeStr.startsWith(todayStr)) continue;
+
+    const temp = hourly.temperature_2m[i];
+    const hum = hourly.relative_humidity_2m[i];
+    const wind = hourly.wind_speed_10m[i];
+    const solar = hourly.shortwave_radiation[i] ?? 0;
+    if (temp == null || hum == null || wind == null) continue;
+
+    const result = calculateWbgt(temp, hum, wind, solar);
+    physicsForecast.push({
+      hour: times[i].getHours(),
+      wbgt: result.wbgt,
+      temperature: temp,
+      humidity: hum,
+      wind_speed: wind,
+      solar_radiation: solar,
+    });
+  }
+
+  // Build history arrays for ML seed (all past data before today)
+  const histTemps: number[] = [];
+  const histHums: number[] = [];
+  const histWinds: number[] = [];
+  for (let i = 0; i < times.length; i++) {
+    if (hourly.time[i] >= todayStr + 'T00:00') break;
     if (
       hourly.temperature_2m[i] != null &&
       hourly.relative_humidity_2m[i] != null &&
       hourly.wind_speed_10m[i] != null
     ) {
-      validIndices.push(i);
+      histTemps.push(hourly.temperature_2m[i]);
+      histHums.push(hourly.relative_humidity_2m[i]);
+      histWinds.push(hourly.wind_speed_10m[i]);
     }
   }
 
   return {
-    temps: validIndices.map((i: number) => hourly.temperature_2m[i]),
-    hums: validIndices.map((i: number) => hourly.relative_humidity_2m[i]),
-    winds: validIndices.map((i: number) => hourly.wind_speed_10m[i]),
+    physicsForecast,
+    history: histTemps.length >= 73
+      ? { temps: histTemps, hums: histHums, winds: histWinds }
+      : null,
   };
 }
 
-// ---- Convert ML WBGTForecast[] → HourlyForecast[] for schedule optimizer ----
+// Max mean absolute deviation (°C) to accept RF over physics
+const RF_DEVIATION_THRESHOLD = 2.0;
 
-function mlToHourlyForecast(results: WBGTForecast[]): HourlyForecast[] {
-  return results.map((r) => ({
-    hour: r.timestamp.getHours(),
-    wbgt: r.wbgt,
-    temperature: r.temperature,
-    humidity: r.humidity,
-    wind_speed: r.windSpeed,
-    solar_radiation: 0, // not predicted by ML models
-  }));
-}
+// ---- Main Component ----
 
 export default function Schedule() {
   const { selectedDistrict, setSelectedDistrict } = useAppStore();
   const [workHoursNeeded, setWorkHoursNeeded] = useState(8);
   const [forecast, setForecast] = useState<HourlyForecast[]>([]);
   const [schedule, setSchedule] = useState<WorkSchedule | null>(null);
-  const [mlActive, setMlActive] = useState(false);
-  const [mlError, setMlError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<'loading' | 'physics' | 'rf-enhanced'>('loading');
+  const [rfDeviation, setRfDeviation] = useState<number | null>(null);
   const isForecastingRef = useRef(false);
 
   const { isReady, predictMultiStep } = useHeatShieldML();
   const districts = getUgandaDistricts();
 
-  // Run ML forecast when models are ready and district changes
   useEffect(() => {
     if (!selectedDistrict) {
       setSelectedDistrict(districts[0]);
     }
 
     const district = selectedDistrict || districts[0];
-
-    if (!isReady || !district) {
-      // ML not ready yet — show demo data
-      const baseTemp = 30 + Math.random() * 4;
-      const humidity = 60 + Math.random() * 15;
-      const data = generateDemoForecast(baseTemp, humidity);
-      setForecast(data);
-      setSchedule(optimizeWorkSchedule(data, workHoursNeeded));
-      setMlActive(false);
-      return;
-    }
-
-    if (isForecastingRef.current) return;
+    if (!district || isForecastingRef.current) return;
     isForecastingRef.current = true;
 
     (async () => {
       try {
-        const { temps, hums, winds } = await fetchWeatherHistory(district.lat, district.lon);
-        if (temps.length < 73) throw new Error(`Insufficient history: ${temps.length}/73`);
-        const results = await predictMultiStep(temps, hums, winds, 24);
-        const hourlyData = mlToHourlyForecast(results);
-        setForecast(hourlyData);
-        setSchedule(optimizeWorkSchedule(hourlyData, workHoursNeeded));
-        setMlActive(true);
-        setMlError(null);
+        // 1. Always fetch real weather data and compute physics-based WBGT
+        const { physicsForecast, history } = await fetchWeatherData(district.lat, district.lon);
+
+        if (physicsForecast.length < 12) {
+          throw new Error(`Insufficient forecast data: ${physicsForecast.length} hours`);
+        }
+
+        let finalForecast = physicsForecast;
+        let source: 'physics' | 'rf-enhanced' = 'physics';
+        let deviation: number | null = null;
+
+        // 2. If RF models are ready and we have enough history, compare
+        if (isReady && history) {
+          try {
+            const rfResults = await predictMultiStep(
+              history.temps, history.hums, history.winds, 24,
+            );
+
+            // Build a map of RF WBGT by hour for comparison
+            const rfByHour = new Map<number, number>();
+            for (const r of rfResults) {
+              rfByHour.set(r.timestamp.getHours(), r.wbgt);
+            }
+
+            // Compute mean absolute deviation against physics baseline
+            let totalDev = 0;
+            let matchCount = 0;
+            for (const pf of physicsForecast) {
+              const rfWbgt = rfByHour.get(pf.hour);
+              if (rfWbgt != null) {
+                totalDev += Math.abs(rfWbgt - pf.wbgt);
+                matchCount++;
+              }
+            }
+            const mae = matchCount > 0 ? totalDev / matchCount : Infinity;
+            deviation = Math.round(mae * 10) / 10;
+
+            console.log(`[Schedule] RF vs Physics MAE: ${mae.toFixed(2)}°C (threshold: ${RF_DEVIATION_THRESHOLD}°C)`);
+
+            if (mae <= RF_DEVIATION_THRESHOLD) {
+              // RF is close to physics — use RF-enhanced values
+              // Blend: 70% physics + 30% RF for conservative enhancement
+              finalForecast = physicsForecast.map((pf) => {
+                const rfWbgt = rfByHour.get(pf.hour);
+                if (rfWbgt != null) {
+                  return { ...pf, wbgt: Math.round((0.7 * pf.wbgt + 0.3 * rfWbgt) * 10) / 10 };
+                }
+                return pf;
+              });
+              source = 'rf-enhanced';
+            } else {
+              console.warn(`[Schedule] RF deviation too high (${mae.toFixed(1)}°C), using physics only`);
+            }
+          } catch (rfErr) {
+            console.warn('[Schedule] RF inference failed, using physics only:', rfErr);
+          }
+        }
+
+        setForecast(finalForecast);
+        setSchedule(optimizeWorkSchedule(finalForecast, workHoursNeeded));
+        setDataSource(source);
+        setRfDeviation(deviation);
       } catch (err: any) {
-        console.warn('[Schedule] ML forecast failed, using demo data:', err);
-        setMlError(err.message || 'ML forecast failed');
-        const baseTemp = 30 + Math.random() * 4;
-        const humidity = 60 + Math.random() * 15;
-        const data = generateDemoForecast(baseTemp, humidity);
-        setForecast(data);
-        setSchedule(optimizeWorkSchedule(data, workHoursNeeded));
-        setMlActive(false);
+        console.error('[Schedule] Failed to fetch weather data:', err);
+        // Unable to reach Open-Meteo — no data to show
+        setForecast([]);
+        setSchedule(null);
+        setDataSource('loading');
       } finally {
         isForecastingRef.current = false;
       }
@@ -279,26 +353,27 @@ export default function Schedule() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold text-gray-900">Work Schedule Optimizer</h1>
-            {mlActive ? (
+            {dataSource === 'rf-enhanced' ? (
               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                <Cpu className="h-3 w-3" /> Random Forest
+                <Cpu className="h-3 w-3" /> RF-Enhanced
+              </span>
+            ) : dataSource === 'physics' ? (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                Physics Model
               </span>
             ) : (
               <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
-                Demo Data
+                Loading...
               </span>
             )}
           </div>
           <p className="text-gray-500 mt-1">
-            {mlActive
-              ? 'RF-predicted weather → physics-based WBGT → schedule optimization'
-              : 'Simulated forecast — ML models loading…'}
+            {dataSource === 'rf-enhanced'
+              ? `Real weather data + RF enhancement (deviation: ${rfDeviation}°C)`
+              : dataSource === 'physics'
+              ? `Physics-based WBGT from real Open-Meteo weather forecast${rfDeviation != null ? ` (RF rejected: ${rfDeviation}°C deviation)` : ''}`
+              : 'Fetching weather data...'}
           </p>
-          {mlError && (
-            <p className="text-amber-600 text-sm mt-1">
-              ML fallback: {mlError}
-            </p>
-          )}
         </div>
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
@@ -412,34 +487,28 @@ export default function Schedule() {
                 Recommended Daily Schedule
               </h2>
               <div className="space-y-3">
-                {(() => {
-                  // Build contiguous work/rest blocks from the actual safe_hours
-                  const safe = new Set(schedule.safe_hours);
-                  const blocks: { title: string; start: number; end: number; type: 'work' | 'rest' }[] = [];
-                  let i = 0;
-                  while (i < 24) {
-                    const isWork = safe.has(i);
-                    const blockStart = i;
-                    while (i < 24 && safe.has(i) === isWork) i++;
-                    if (isWork) {
-                      blocks.push({ title: `Work Session`, start: blockStart, end: i, type: 'work' });
-                    } else if (i - blockStart >= 2) {
-                      blocks.push({ title: `Rest Period`, start: blockStart, end: i, type: 'rest' });
-                    }
-                  }
-                  // Label work blocks sequentially
-                  const labels = ['Early', 'Morning', 'Afternoon', 'Evening'];
-                  let workIdx = 0;
-                  return blocks.map((b, idx) => (
-                    <WorkBlock
-                      key={idx}
-                      title={b.type === 'work' ? `${labels[workIdx++] || ''} Work Session`.trim() : b.title}
-                      startHour={b.start}
-                      endHour={b.end}
-                      type={b.type}
-                    />
-                  ));
-                })()}
+                {schedule.recommended_start < 11 && (
+                  <WorkBlock
+                    title="Morning Work Session"
+                    startHour={schedule.recommended_start}
+                    endHour={Math.min(11, schedule.recommended_end + 1)}
+                    type="work"
+                  />
+                )}
+                <WorkBlock
+                  title="Midday Rest Period"
+                  startHour={11}
+                  endHour={15}
+                  type="rest"
+                />
+                {schedule.recommended_end >= 15 && (
+                  <WorkBlock
+                    title="Afternoon Work Session"
+                    startHour={15}
+                    endHour={schedule.recommended_end + 1}
+                    type="work"
+                  />
+                )}
               </div>
             </div>
 
