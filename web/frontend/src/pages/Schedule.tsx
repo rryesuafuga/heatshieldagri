@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   BarChart,
   Bar,
@@ -9,8 +9,10 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts';
-import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2, Cpu } from 'lucide-react';
 import { useAppStore } from '../store';
+import { useHeatShieldML } from '../hooks/useHeatShieldML';
+import type { WBGTForecast } from '../ml-inference';
 import {
   generateDemoForecast,
   optimizeWorkSchedule,
@@ -157,39 +159,146 @@ function WorkBlock({
   );
 }
 
+// ---- Fetch recent weather history from Open-Meteo for ML seed data ----
+
+async function fetchWeatherHistory(
+  lat: number, lon: number,
+): Promise<{ temps: number[]; hums: number[]; winds: number[] }> {
+  const url = `https://api.open-meteo.com/v1/forecast?` +
+    `latitude=${lat}&longitude=${lon}` +
+    `&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m` +
+    `&past_days=4&forecast_days=1` +
+    `&timezone=Africa/Kampala`;
+
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Open-Meteo API error: ${resp.status}`);
+  const data = await resp.json();
+  const hourly = data.hourly;
+
+  const validIndices: number[] = [];
+  for (let i = 0; i < hourly.time.length; i++) {
+    if (
+      hourly.temperature_2m[i] != null &&
+      hourly.relative_humidity_2m[i] != null &&
+      hourly.wind_speed_10m[i] != null
+    ) {
+      validIndices.push(i);
+    }
+  }
+
+  return {
+    temps: validIndices.map((i: number) => hourly.temperature_2m[i]),
+    hums: validIndices.map((i: number) => hourly.relative_humidity_2m[i]),
+    winds: validIndices.map((i: number) => hourly.wind_speed_10m[i]),
+  };
+}
+
+// ---- Convert ML WBGTForecast[] → HourlyForecast[] for schedule optimizer ----
+
+function mlToHourlyForecast(results: WBGTForecast[]): HourlyForecast[] {
+  return results.map((r) => ({
+    hour: r.timestamp.getHours(),
+    wbgt: r.wbgt,
+    temperature: r.temperature,
+    humidity: r.humidity,
+    wind_speed: r.windSpeed,
+    solar_radiation: 0, // not predicted by ML models
+  }));
+}
+
 export default function Schedule() {
   const { selectedDistrict, setSelectedDistrict } = useAppStore();
   const [workHoursNeeded, setWorkHoursNeeded] = useState(8);
   const [forecast, setForecast] = useState<HourlyForecast[]>([]);
   const [schedule, setSchedule] = useState<WorkSchedule | null>(null);
+  const [mlActive, setMlActive] = useState(false);
+  const [mlError, setMlError] = useState<string | null>(null);
+  const isForecastingRef = useRef(false);
 
+  const { isReady, predictMultiStep } = useHeatShieldML();
   const districts = getUgandaDistricts();
 
+  // Run ML forecast when models are ready and district changes
   useEffect(() => {
     if (!selectedDistrict) {
       setSelectedDistrict(districts[0]);
     }
 
-    // Generate forecast
-    const baseTemp = 30 + Math.random() * 4;
-    const humidity = 60 + Math.random() * 15;
-    const data = generateDemoForecast(baseTemp, humidity);
-    setForecast(data);
+    const district = selectedDistrict || districts[0];
 
-    // Optimize schedule
-    const optimized = optimizeWorkSchedule(data, workHoursNeeded);
-    setSchedule(optimized);
-  }, [selectedDistrict, workHoursNeeded]);
+    if (!isReady || !district) {
+      // ML not ready yet — show demo data
+      const baseTemp = 30 + Math.random() * 4;
+      const humidity = 60 + Math.random() * 15;
+      const data = generateDemoForecast(baseTemp, humidity);
+      setForecast(data);
+      setSchedule(optimizeWorkSchedule(data, workHoursNeeded));
+      setMlActive(false);
+      return;
+    }
+
+    if (isForecastingRef.current) return;
+    isForecastingRef.current = true;
+
+    (async () => {
+      try {
+        const { temps, hums, winds } = await fetchWeatherHistory(district.lat, district.lon);
+        if (temps.length < 73) throw new Error(`Insufficient history: ${temps.length}/73`);
+        const results = await predictMultiStep(temps, hums, winds, 24);
+        const hourlyData = mlToHourlyForecast(results);
+        setForecast(hourlyData);
+        setSchedule(optimizeWorkSchedule(hourlyData, workHoursNeeded));
+        setMlActive(true);
+        setMlError(null);
+      } catch (err: any) {
+        console.warn('[Schedule] ML forecast failed, using demo data:', err);
+        setMlError(err.message || 'ML forecast failed');
+        const baseTemp = 30 + Math.random() * 4;
+        const humidity = 60 + Math.random() * 15;
+        const data = generateDemoForecast(baseTemp, humidity);
+        setForecast(data);
+        setSchedule(optimizeWorkSchedule(data, workHoursNeeded));
+        setMlActive(false);
+      } finally {
+        isForecastingRef.current = false;
+      }
+    })();
+  }, [selectedDistrict, isReady, predictMultiStep]);
+
+  // Re-optimize schedule when work hours slider changes (no re-fetch needed)
+  useEffect(() => {
+    if (forecast.length > 0) {
+      setSchedule(optimizeWorkSchedule(forecast, workHoursNeeded));
+    }
+  }, [workHoursNeeded]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Work Schedule Optimizer</h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-3xl font-bold text-gray-900">Work Schedule Optimizer</h1>
+            {mlActive ? (
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                <Cpu className="h-3 w-3" /> Random Forest
+              </span>
+            ) : (
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+                Demo Data
+              </span>
+            )}
+          </div>
           <p className="text-gray-500 mt-1">
-            AI-recommended safe work windows based on WBGT forecast
+            {mlActive
+              ? 'ML-optimized safe work windows — ONNX Random Forest models + Open-Meteo weather data'
+              : 'Simulated forecast — ML models loading…'}
           </p>
+          {mlError && (
+            <p className="text-amber-600 text-sm mt-1">
+              ML fallback: {mlError}
+            </p>
+          )}
         </div>
         <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2">
