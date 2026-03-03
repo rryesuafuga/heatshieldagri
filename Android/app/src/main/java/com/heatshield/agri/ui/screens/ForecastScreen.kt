@@ -50,14 +50,12 @@ fun ForecastScreen(
 
     // Physics summary stats
     val physicsMax = physicsDay.maxOfOrNull { it.wbgt } ?: 0.0
-    val physicsMin = physicsDay.minOfOrNull { it.wbgt } ?: 0.0
     val physicsAvg = if (physicsDay.isNotEmpty()) physicsDay.map { it.wbgt }.average() else 0.0
     val peakHour = physicsDay.maxByOrNull { it.wbgt }?.hour ?: 12
     val overallRisk = WbgtCalculator.classifyRisk(physicsMax)
 
     // RF summary stats
     val rfMax = rfDay.maxOfOrNull { it.wbgt } ?: 0.0
-    val rfMin = rfDay.minOfOrNull { it.wbgt } ?: 0.0
     val rfAvg = if (rfDay.isNotEmpty()) rfDay.map { it.wbgt }.average() else 0.0
 
     Scaffold(
