@@ -1,6 +1,8 @@
 # HeatShield Agri - Deployment Readiness Strategy Report
 
-**Prepared:** March 1, 2026
+**Author:** Raymond Reuel Wayesu
+**Organisation:** Wayesu Community Research Organisation Ltd
+**Prepared:** March 3, 2026
 **Context:** Pre-interview assessment for Activate AI Challenge grant
 **Interview Date:** March 9, 2026
 **Scope:** Full platform audit across Web, Android, USSD, and WASM components
@@ -9,7 +11,7 @@
 
 ## Executive Summary
 
-HeatShield Agri has a **strong MVP-level foundation** across all three delivery channels (web, Android, USSD). The core scientific engine - ISO 7243 WBGT calculations - is **correctly and consistently implemented** across all platforms. The web dashboard is the most production-ready component and is already **live at heatshieldagri.vercel.app** with real weather data. However, significant gaps exist between the current state and the deployment-ready system described in the grant application. This report identifies exactly what works, what doesn't, and what actions are needed to present confidently in the interview and execute within the 12-month grant timeline.
+HeatShield Agri, designed by **Wayesu Community Research Organisation Ltd** (Raymond Reuel Wayesu), has a **strong MVP-level foundation** across all three delivery channels (web, Android, USSD). The core scientific engine - ISO 7243 WBGT calculations - is **correctly and consistently implemented** across all platforms, now enhanced with **Random Forest ML inference** deployed on both web and Android. The web dashboard is the most production-ready component and is already **live at heatshieldagri.vercel.app** with real weather data. The Android app now features deployed ML inference with 3 ONNX models, dual-model forecast display, and ML-powered schedule optimization. This report identifies exactly what works, what doesn't, and what actions are needed to present confidently in the interview and execute within the 12-month grant timeline.
 
 ---
 
@@ -21,7 +23,7 @@ HeatShield Agri has a **strong MVP-level foundation** across all three delivery 
 
 **Location:** `web/frontend/`
 **Live URL:** https://heatshieldagri.vercel.app
-**Readiness: 7.5/10 - Strongest component, production-deployed**
+**Readiness: 8.5/10 - Strongest component, production-deployed with ML inference**
 
 #### What Works
 
@@ -35,6 +37,9 @@ HeatShield Agri has a **strong MVP-level foundation** across all three delivery 
 | Multi-language support | LIVE | English, Luganda, Runyankole, Acholi, Swahili |
 | Responsive design | LIVE | Mobile-first, works on all screen sizes |
 | Deployment | LIVE | Vercel with security headers, SPA routing, asset caching |
+| Random Forest ML inference | DEPLOYED | Real WASM compilation on Demo page, both Physics and RF models displayed |
+| Dual-model display | LIVE | Shows both Physics and Random Forest WBGT predictions |
+| Organisation branding | LIVE | "Designed by Wayesu Community Research Organisation Ltd" in footer |
 
 #### What Doesn't Work
 
@@ -45,7 +50,7 @@ HeatShield Agri has a **strong MVP-level foundation** across all three delivery 
 | Alert history is demo data | MEDIUM | Hardcoded sample alerts, not real notifications |
 | No user authentication | MEDIUM | No login/accounts; everything is anonymous |
 | No test coverage | MEDIUM | Vitest configured but zero tests written |
-| WASM module not compiled | LOW | Rust WASM exists but JS fallback is used (works fine for MVP) |
+| WASM module partially integrated | LOW | Real WASM compilation working on Demo page; other pages use JS fallback (works fine for MVP) |
 
 #### Interview Confidence Points
 
@@ -59,7 +64,7 @@ HeatShield Agri has a **strong MVP-level foundation** across all three delivery 
 ### 2. ANDROID APP (Kotlin + Jetpack Compose)
 
 **Location:** `Android/`
-**Readiness: 4.5/10 - Functional demo, not production-ready**
+**Readiness: 6.5/10 - Functional with deployed ML inference, real weather data on all key screens**
 
 #### What Works
 
@@ -71,12 +76,19 @@ HeatShield Agri has a **strong MVP-level foundation** across all three delivery 
 | Material 3 UI | FUNCTIONAL | Modern Compose UI with HeatShield theming |
 | Interactive WBGT demo | FUNCTIONAL | Sliders for temperature/humidity with live calculation |
 | Architecture | SOUND | MVVM + Hilt DI + Coroutines + StateFlow |
+| Random Forest ML inference | DEPLOYED | 3 ONNX models (temp, humidity, windspeed ~6.2 MB), 17-feature pipeline, physics-first + RF validation |
+| Dual-model Forecast display | DEPLOYED | Shows both Physics and RF WBGT side by side |
+| ML-powered Schedule optimizer | DEPLOYED | Real weather data + RF validation with daylight hours constraint (6-18) |
+| Real Open-Meteo weather data | DEPLOYED | Real weather data on ALL screens (Dashboard, Forecast, Schedule), not just Dashboard |
+| ONNX Runtime Android | DEPLOYED | Native C++ via JNI for ML inference |
+| Physics-first architecture | DEPLOYED | ISO 7243 provides baseline, RF validates within MAE threshold of 2.0 deg C |
+| Organisation branding | DEPLOYED | "Designed by Wayesu Community Research Organisation Ltd" branding added |
 
 #### What Doesn't Work
 
 | Gap | Severity | Impact |
 |-----|----------|--------|
-| Forecast/Map/Schedule use demo data | HIGH | Only Dashboard fetches real weather; other screens use hardcoded/generated data |
+| Map still uses demo data | MEDIUM | Map screen uses hardcoded/generated data; Forecast and Schedule now use real ML + real weather data |
 | No offline capability | HIGH | Room database dependency installed but never used; app requires internet |
 | SMS alerts completely non-functional | HIGH | UI mockup only; no Africa's Talking integration |
 | No push notifications | HIGH | Permissions declared in manifest but no implementation |
@@ -87,10 +99,12 @@ HeatShield Agri has a **strong MVP-level foundation** across all three delivery 
 
 #### Interview Confidence Points
 
-- **Do NOT demo the Android app live** unless you have it running on a device beforehand. The demo data in Forecast/Map/Schedule screens would raise questions.
-- **Architecture is genuinely good**: Hilt DI, MVVM, Coroutines, Compose - this is how modern Android apps should be built.
-- **Frame as "foundation for pilot"**: The grant timeline (Months 4-6) is when the Android app gets deployed to 2,000 farmers. The current state is a functional prototype ready for that development phase.
-- **The Dashboard screen is real**: It connects to Open-Meteo and calculates real WBGT. If asked about the app, focus on this.
+- **The Android app CAN be demoed live**: Forecast and Schedule screens now use real weather data with deployed Random Forest ML inference. Dashboard, Forecast, and Schedule all show real data.
+- **ML inference is a strong demo point**: Show the dual-model display (Physics vs RF WBGT side by side) on the Forecast tab. The 3 ONNX models running natively on Android via JNI is impressive.
+- **Architecture is genuinely good**: Hilt DI, MVVM, Coroutines, Compose - this is how modern Android apps should be built. The physics-first architecture with RF validation is scientifically sound.
+- **Frame as "functional prototype with ML"**: The grant timeline (Months 4-6) is when the Android app gets deployed to 2,000 farmers. The current state demonstrates real ML capability and real weather data.
+- **Multiple screens with real data**: Dashboard connects to Open-Meteo, Forecast shows dual Physics+RF models, and Schedule uses ML-powered optimization with daylight constraints.
+- **Note**: Map screen still uses demo data - steer the conversation toward Forecast or Schedule if asked about the app.
 
 ---
 
@@ -198,11 +212,11 @@ The core scientific engine (WBGT) is implemented identically across all platform
 
 3. **Know the limitations honestly** - If asked "Does the SMS system work?", the honest answer is: "The USSD interface is built and follows Africa's Talking's protocol. SMS delivery is the first integration milestone in Months 1-3 of the grant." Do not claim SMS is working.
 
-4. **Frame correctly**: "Working MVP" means the web dashboard with real weather data and WBGT calculations. The Android app and USSD are "functional prototypes" that demonstrate the architecture and will be completed in the grant period.
+4. **Frame correctly**: "Working MVP" means the web dashboard with real weather data and WBGT calculations, plus the Android app with deployed Random Forest ML inference. The USSD system is a "functional prototype" that demonstrates the architecture and will be completed in the grant period.
 
 ### Should Do (Before Interview)
 
-5. **Have the Android APK on a phone** (even just the Dashboard screen) - if they ask to see the app, you can show the real-time Dashboard.
+5. **Have the Android APK on a phone** - the app can now be demoed confidently. Show the Dashboard with real weather, Forecast with dual Physics+RF models, and the ML-powered Schedule optimizer.
 
 6. **Prepare a screen recording fallback** - In case of network issues during the interview, have a 2-minute screen recording of the web dashboard in action.
 
@@ -230,7 +244,7 @@ The core scientific engine (WBGT) is implemented identically across all platform
 
 | Action | Component | Priority | Effort |
 |--------|-----------|----------|--------|
-| Connect Android Forecast/Map/Schedule to real API | Android | CRITICAL | 2 weeks |
+| Connect Android Map screen to real API (Forecast/Schedule already done) | Android | HIGH | 1 week |
 | Implement Room database for offline caching | Android | CRITICAL | 1 week |
 | Implement WorkManager for background sync | Android | HIGH | 1 week |
 | Build push notification system | Android | HIGH | 1 week |
@@ -245,7 +259,7 @@ The core scientific engine (WBGT) is implemented identically across all platform
 | Action | Component | Priority | Effort |
 |--------|-----------|----------|--------|
 | Scale USSD to 10,000 users | USSD/Backend | HIGH | Ongoing |
-| Implement ML model enhancement (XGBoost) | Backend | MEDIUM | 3 weeks |
+| Scale Random Forest ML to USSD channel and refine model accuracy | Backend/USSD | MEDIUM | 3 weeks |
 | Add cooperative/institutional dashboards (B2B) | Web | MEDIUM | 3 weeks |
 | Performance optimization (WASM compilation) | Web | MEDIUM | 1 week |
 | Implement data collection for impact measurement | Backend | HIGH | 2 weeks |
@@ -302,7 +316,7 @@ A: "The architecture includes Room database and WorkManager for offline capabili
 A: "The web dashboard is live and publicly accessible. We haven't begun farmer recruitment yet - that starts with the pilot in Months 4-6. The grant funding enables the partnership with UNFFE to reach the first 2,000 farmers."
 
 **Q: "Is the AI/ML model trained?"**
-A: "The current system uses physics-based WBGT calculations following ISO 7243, which is the gold standard for heat stress assessment. The ML enhancement (XGBoost for improved predictions) is planned for Months 7-9, building on the baseline accuracy of the physics model."
+A: "We have already deployed Random Forest ML inference on both the web dashboard and Android app. Three ONNX models predict temperature, humidity, and wind speed using a 17-feature engineering pipeline. The system uses a physics-first architecture where ISO 7243 provides the baseline, and Random Forest validates and enhances predictions when the deviation is within 2.0 deg C."
 
 ---
 
@@ -317,26 +331,28 @@ A: "The current system uses physics-based WBGT calculations following ISO 7243, 
 - "We've designed the system for feature phone access via USSD at $0.30/farmer/year"
 - "The codebase is open-source under MIT license"
 - "We use real weather data from meteorological APIs, not simulated data"
+- "We have trained and deployed Random Forest ML models for WBGT prediction"
+- "Our Android app runs 3 ONNX models natively for temperature, humidity, and wind speed prediction"
+- "We use a physics-first architecture where ISO 7243 provides the baseline and Random Forest validates predictions"
 
 ### CAREFUL - Frame accurately:
-- The Android app is a "functional prototype" (not a production app)
+- The Android app is a "functional prototype with deployed ML" (not a full production app yet)
 - The USSD system is "architecturally complete" (not fully integrated)
 - SMS alerts are "designed and structured" (not yet sending real messages)
-- The ML model is "planned enhancement" (current system is physics-based)
+- The Map screen on Android still uses demo data (Forecast and Schedule use real data)
 - Partnerships are "in discussion" (not formally signed)
 
 ### AVOID - Do not claim:
 - That SMS alerts are currently being delivered
 - That the Android app works offline
 - That you have active farmers using the system
-- That the ML model is trained and deployed
 - That partnerships are formalized
 
 ---
 
 ## Final Assessment
 
-**Overall Platform Readiness: 5.5/10 for production deployment, 8/10 as a grant-stage MVP**
+**Overall Platform Readiness: 6.5/10 for production deployment, 8.5/10 as a grant-stage MVP**
 
 The gap between these two scores IS the grant. The $250,000 funding closes the gap between a demonstrated MVP and a deployed, scaled solution reaching 10,000 farmers. The technology foundation is sound, the science is correct, and the architecture supports the growth plan. What's needed is integration work, infrastructure, and the partnerships that come with funded credibility.
 
