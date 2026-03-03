@@ -138,7 +138,6 @@ class ForecastViewModel @Inject constructor(
                                 }
 
                                 _rfForecast.value = rfHourly
-                                _rfAvailable.value = true
 
                                 // Compute MAE for informational display
                                 val comparableHours = minOf(physicsForecast.size, rfHourly.size)
@@ -149,6 +148,9 @@ class ForecastViewModel @Inject constructor(
                                     _rfDeviation.value = mae
                                     Log.d(TAG, "RF vs Physics MAE: %.2f°C".format(mae))
                                 }
+
+                                _rfAvailable.value = true
+                                Log.d(TAG, "RF inference complete: ${rfHourly.size} hours")
                             } catch (e: Exception) {
                                 Log.w(TAG, "RF inference failed: ${e.message}")
                                 _rfAvailable.value = false
