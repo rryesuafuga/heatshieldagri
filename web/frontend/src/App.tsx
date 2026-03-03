@@ -128,8 +128,13 @@ function Footer() {
               HeatShield Agri - Protecting farmers from dangerous heat
             </span>
           </div>
-          <div className="text-sm text-gray-500">
-            &copy; 2026 HeatShield Agri. Built for Uganda's agricultural workers.
+          <div className="text-right">
+            <div className="text-sm text-gray-500">
+              &copy; 2026 HeatShield Agri. Built for Uganda&apos;s agricultural workers.
+            </div>
+            <div className="text-xs text-gray-400 mt-1">
+              Designed by Wayesu Community Research Organisation Ltd
+            </div>
           </div>
         </div>
       </div>
