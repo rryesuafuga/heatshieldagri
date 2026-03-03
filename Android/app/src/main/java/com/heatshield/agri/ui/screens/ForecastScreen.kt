@@ -1,5 +1,6 @@
 package com.heatshield.agri.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.heatshield.agri.data.WbgtCalculator
@@ -23,8 +25,9 @@ import com.heatshield.agri.ui.viewmodel.ForecastViewModel
 fun ForecastScreen(
     viewModel: ForecastViewModel = hiltViewModel()
 ) {
-    val forecast by viewModel.forecast.collectAsState()
-    val dataSource by viewModel.dataSource.collectAsState()
+    val physicsForecast by viewModel.physicsForecast.collectAsState()
+    val rfForecast by viewModel.rfForecast.collectAsState()
+    val rfAvailable by viewModel.rfAvailable.collectAsState()
     val rfDeviation by viewModel.rfDeviation.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val mlLoadProgress by viewModel.mlLoadProgress.collectAsState()
@@ -33,20 +36,29 @@ fun ForecastScreen(
     var selectedDay by remember { mutableStateOf(0) }
     val days = listOf("Today", "Tomorrow")
 
-    // Split forecast into days (24h each)
-    val dayForecast = if (forecast.isNotEmpty()) {
-        forecast.drop(selectedDay * 24).take(24)
+    // Split forecasts into days (24h each), filter to daylight (6-18)
+    val physicsDay = if (physicsForecast.isNotEmpty()) {
+        physicsForecast.drop(selectedDay * 24).take(24).filter { it.hour in 6..18 }
     } else emptyList()
 
-    // Filter to daylight hours (6-18) for display
-    val daylightForecast = dayForecast.filter { it.hour in 6 until 18 }
+    val rfDay = if (rfForecast.isNotEmpty()) {
+        rfForecast.drop(selectedDay * 24).take(24).filter { it.hour in 6..18 }
+    } else emptyList()
 
-    val maxWbgt = daylightForecast.maxOfOrNull { it.wbgt } ?: 0.0
-    val minWbgt = daylightForecast.minOfOrNull { it.wbgt } ?: 0.0
-    val avgWbgt = if (daylightForecast.isNotEmpty()) daylightForecast.map { it.wbgt }.average() else 0.0
-    val safeHours = daylightForecast.count { it.wbgt < 28 }
-    val peakHour = daylightForecast.maxByOrNull { it.wbgt }?.hour ?: 12
-    val overallRisk = WbgtCalculator.classifyRisk(maxWbgt)
+    // Build a map of RF WBGT by hour for quick lookup
+    val rfByHour = rfDay.associateBy { it.hour }
+
+    // Physics summary stats
+    val physicsMax = physicsDay.maxOfOrNull { it.wbgt } ?: 0.0
+    val physicsMin = physicsDay.minOfOrNull { it.wbgt } ?: 0.0
+    val physicsAvg = if (physicsDay.isNotEmpty()) physicsDay.map { it.wbgt }.average() else 0.0
+    val peakHour = physicsDay.maxByOrNull { it.wbgt }?.hour ?: 12
+    val overallRisk = WbgtCalculator.classifyRisk(physicsMax)
+
+    // RF summary stats
+    val rfMax = rfDay.maxOfOrNull { it.wbgt } ?: 0.0
+    val rfMin = rfDay.minOfOrNull { it.wbgt } ?: 0.0
+    val rfAvg = if (rfDay.isNotEmpty()) rfDay.map { it.wbgt }.average() else 0.0
 
     Scaffold(
         topBar = {
@@ -55,43 +67,46 @@ fun ForecastScreen(
                     Column {
                         Text("WBGT Forecast", fontWeight = FontWeight.Bold)
                         Text(
-                            selectedDistrict.name + " — " + when (dataSource) {
-                                "rf-enhanced" -> "RF-Enhanced"
-                                "physics" -> "Physics Model"
-                                "loading" -> "Loading..."
-                                "error" -> "Offline"
-                                else -> dataSource
-                            },
+                            selectedDistrict.name,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 actions = {
-                    val (badgeColor, badgeText) = when (dataSource) {
-                        "rf-enhanced" -> Color(0xFF22C55E) to "RF"
-                        "physics" -> Color(0xFF3B82F6) to "Physics"
-                        "loading" -> Color(0xFF9CA3AF) to "..."
-                        else -> Color(0xFFEF4444) to "!"
+                    // Always show both model badges
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFF3B82F6).copy(alpha = 0.15f),
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Text(
+                            "Physics",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF3B82F6)
+                        )
                     }
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = badgeColor.copy(alpha = 0.15f),
+                        color = if (rfAvailable) Color(0xFF22C55E).copy(alpha = 0.15f)
+                        else Color(0xFF9CA3AF).copy(alpha = 0.15f),
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Text(
-                            badgeText,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            "RF",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
-                            color = badgeColor
+                            color = if (rfAvailable) Color(0xFF22C55E) else Color(0xFF9CA3AF)
                         )
                     }
                 }
             )
         }
     ) { padding ->
-        if (isLoading && forecast.isEmpty()) {
+        if (isLoading && physicsForecast.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -115,9 +130,9 @@ fun ForecastScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item { Spacer(modifier = Modifier.height(8.dp)) }
+                item { Spacer(modifier = Modifier.height(4.dp)) }
 
                 // District Selector
                 item {
@@ -128,61 +143,78 @@ fun ForecastScreen(
                     )
                 }
 
-                // ML Status Card
-                if (dataSource == "rf-enhanced" && rfDeviation != null) {
-                    item {
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = Color(0xFF22C55E).copy(alpha = 0.08f)
-                            )
-                        ) {
+                // Model comparison info card
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant
+                        )
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
                             Row(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    Icons.Default.Psychology,
-                                    contentDescription = null,
-                                    tint = Color(0xFF22C55E),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    "Random Forest ML enhanced — MAE: ${"%.1f".format(rfDeviation)}°C (70% physics + 30% RF)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF166534)
-                                )
-                            }
-                        }
-                    }
-                } else if (dataSource == "physics") {
-                    item {
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = Color(0xFF3B82F6).copy(alpha = 0.08f)
-                            )
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    Icons.Default.Science,
-                                    contentDescription = null,
-                                    tint = Color(0xFF3B82F6),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                val text = if (rfDeviation != null) {
-                                    "Physics model (RF deviation ${"%.1f".format(rfDeviation)}°C exceeds 2.0°C threshold)"
-                                } else {
-                                    "Physics model — Open-Meteo NWP + ISO 7243 WBGT"
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Science,
+                                        contentDescription = null,
+                                        tint = Color(0xFF3B82F6),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        "Physics",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF3B82F6)
+                                    )
+                                    Text(
+                                        "Open-Meteo NWP + ISO 7243",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
                                 }
-                                Text(
-                                    text,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF1E40AF)
-                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        Icons.Default.Psychology,
+                                        contentDescription = null,
+                                        tint = if (rfAvailable) Color(0xFF22C55E) else Color(0xFF9CA3AF),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        "Random Forest",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (rfAvailable) Color(0xFF22C55E) else Color(0xFF9CA3AF)
+                                    )
+                                    if (rfAvailable && rfDeviation != null) {
+                                        Text(
+                                            "MAE: ${"%.1f".format(rfDeviation)}°C",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    } else if (!rfAvailable) {
+                                        Text(
+                                            "Loading...",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = Color(0xFF9CA3AF)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -205,27 +237,40 @@ fun ForecastScreen(
                     }
                 }
 
-                // Summary Cards
-                if (daylightForecast.isNotEmpty()) {
+                // Summary Cards — side by side Physics vs RF
+                if (physicsDay.isNotEmpty()) {
                     item {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
+                            // Physics peak
                             SummaryCard(
                                 modifier = Modifier.weight(1f),
-                                label = "Peak WBGT",
-                                value = "${"%.1f".format(maxWbgt)}°C",
+                                label = "Physics Peak",
+                                value = "${"%.1f".format(physicsMax)}°C",
                                 sublabel = "at ${peakHour}:00",
                                 color = Color(overallRisk.color)
                             )
-                            SummaryCard(
-                                modifier = Modifier.weight(1f),
-                                label = "Minimum",
-                                value = "${"%.1f".format(minWbgt)}°C",
-                                sublabel = "early morning",
-                                color = Color(0xFF22C55E)
-                            )
+                            // RF peak
+                            if (rfAvailable && rfDay.isNotEmpty()) {
+                                val rfOverallRisk = WbgtCalculator.classifyRisk(rfMax)
+                                SummaryCard(
+                                    modifier = Modifier.weight(1f),
+                                    label = "RF Peak",
+                                    value = "${"%.1f".format(rfMax)}°C",
+                                    sublabel = "Random Forest",
+                                    color = Color(rfOverallRisk.color)
+                                )
+                            } else {
+                                SummaryCard(
+                                    modifier = Modifier.weight(1f),
+                                    label = "RF Peak",
+                                    value = "—",
+                                    sublabel = "loading",
+                                    color = Color(0xFF9CA3AF)
+                                )
+                            }
                         }
                     }
 
@@ -236,22 +281,30 @@ fun ForecastScreen(
                         ) {
                             SummaryCard(
                                 modifier = Modifier.weight(1f),
-                                label = "Average",
-                                value = "${"%.1f".format(avgWbgt)}°C",
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            SummaryCard(
-                                modifier = Modifier.weight(1f),
-                                label = "Safe Hours",
-                                value = "$safeHours",
-                                sublabel = "below 28°C (6-18h)",
+                                label = "Physics Avg",
+                                value = "${"%.1f".format(physicsAvg)}°C",
                                 color = Color(0xFF3B82F6)
                             )
+                            if (rfAvailable && rfDay.isNotEmpty()) {
+                                SummaryCard(
+                                    modifier = Modifier.weight(1f),
+                                    label = "RF Avg",
+                                    value = "${"%.1f".format(rfAvg)}°C",
+                                    color = Color(0xFF22C55E)
+                                )
+                            } else {
+                                SummaryCard(
+                                    modifier = Modifier.weight(1f),
+                                    label = "RF Avg",
+                                    value = "—",
+                                    color = Color(0xFF9CA3AF)
+                                )
+                            }
                         }
                     }
                 }
 
-                // Hourly Breakdown Title
+                // Hourly Breakdown header with column labels
                 item {
                     Text(
                         "Hourly Breakdown (6:00 - 18:00)",
@@ -260,13 +313,187 @@ fun ForecastScreen(
                     )
                 }
 
-                // Hourly Cards — daylight hours only
-                items(daylightForecast) { hour ->
-                    HourlyForecastCard(forecast = hour)
+                item {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            "Hour",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(48.dp)
+                        )
+                        Text(
+                            "Physics",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF3B82F6),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "RF",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF22C55E),
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "Temp",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.width(48.dp)
+                        )
+                        Text(
+                            "Status",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier.width(52.dp)
+                        )
+                    }
+                }
+
+                // Hourly dual-model cards
+                items(physicsDay) { physicsHour ->
+                    val rfHour = rfByHour[physicsHour.hour]
+                    DualModelHourlyCard(
+                        physicsHour = physicsHour,
+                        rfHour = rfHour
+                    )
                 }
 
                 item { Spacer(modifier = Modifier.height(16.dp)) }
             }
+        }
+    }
+}
+
+@Composable
+fun DualModelHourlyCard(
+    physicsHour: HourlyForecast,
+    rfHour: HourlyForecast?
+) {
+    val physicsResult = WbgtCalculator.classifyRisk(physicsHour.wbgt)
+    val physicsColor = Color(physicsResult.color)
+
+    val rfResult = rfHour?.let { WbgtCalculator.classifyRisk(it.wbgt) }
+    val rfColor = rfResult?.let { Color(it.color) } ?: Color(0xFF9CA3AF)
+
+    // Work status based on the worse of the two models (conservative)
+    val worstWbgt = maxOf(physicsHour.wbgt, rfHour?.wbgt ?: physicsHour.wbgt)
+    val worstResult = WbgtCalculator.classifyRisk(worstWbgt)
+    val workStatus = when (worstResult.riskLevel) {
+        com.heatshield.agri.data.model.RiskLevel.LOW,
+        com.heatshield.agri.data.model.RiskLevel.MODERATE -> "Safe"
+        com.heatshield.agri.data.model.RiskLevel.HIGH -> "Limited"
+        else -> "Rest"
+    }
+    val workStatusColor = when (workStatus) {
+        "Safe" -> Color(0xFF22C55E)
+        "Limited" -> Color(0xFFF97316)
+        else -> Color(0xFFEF4444)
+    }
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Hour
+            Text(
+                "${String.format("%02d", physicsHour.hour)}:00",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(48.dp)
+            )
+
+            // Physics WBGT
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    "${"%.1f".format(physicsHour.wbgt)}°",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = physicsColor
+                )
+                Surface(
+                    color = physicsColor.copy(alpha = 0.12f),
+                    shape = RoundedCornerShape(4.dp)
+                ) {
+                    Text(
+                        physicsResult.riskLevel.displayName,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = physicsColor
+                    )
+                }
+            }
+
+            // RF WBGT
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.weight(1f)
+            ) {
+                if (rfHour != null && rfResult != null) {
+                    Text(
+                        "${"%.1f".format(rfHour.wbgt)}°",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = rfColor
+                    )
+                    Surface(
+                        color = rfColor.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            rfResult.riskLevel.displayName,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = rfColor
+                        )
+                    }
+                } else {
+                    Text(
+                        "—",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF9CA3AF)
+                    )
+                }
+            }
+
+            // Temperature
+            Text(
+                "${"%.0f".format(physicsHour.temperature)}°C",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.width(48.dp)
+            )
+
+            // Work Status
+            Text(
+                workStatus,
+                style = MaterialTheme.typography.labelMedium,
+                color = workStatusColor,
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(52.dp)
+            )
         }
     }
 }

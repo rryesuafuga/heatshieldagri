@@ -18,12 +18,8 @@ import javax.inject.Inject
 import kotlin.math.abs
 
 /**
- * Physics-first architecture with Random Forest validation for the Forecast tab.
- *
- * 1. Fetch real Open-Meteo NWP forecast (with solar radiation) → compute physics WBGT
- * 2. If RF models loaded and history available, run RF predictions
- * 3. Compare RF vs physics (MAE threshold) → blend only if RF within 2°C
- * 4. Show 48-hour forecast (today + tomorrow) with daylight hour filtering
+ * Forecast tab ViewModel — always runs BOTH physics and RF models,
+ * exposing both sets of predictions so the UI can display them side by side.
  */
 @HiltViewModel
 class ForecastViewModel @Inject constructor(
@@ -34,16 +30,16 @@ class ForecastViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ForecastVM"
-        private const val RF_DEVIATION_THRESHOLD = 2.0
-        private const val PHYSICS_WEIGHT = 0.7
-        private const val RF_WEIGHT = 0.3
     }
 
-    private val _forecast = MutableStateFlow<List<HourlyForecast>>(emptyList())
-    val forecast: StateFlow<List<HourlyForecast>> = _forecast.asStateFlow()
+    private val _physicsForecast = MutableStateFlow<List<HourlyForecast>>(emptyList())
+    val physicsForecast: StateFlow<List<HourlyForecast>> = _physicsForecast.asStateFlow()
 
-    private val _dataSource = MutableStateFlow("loading")
-    val dataSource: StateFlow<String> = _dataSource.asStateFlow()
+    private val _rfForecast = MutableStateFlow<List<HourlyForecast>>(emptyList())
+    val rfForecast: StateFlow<List<HourlyForecast>> = _rfForecast.asStateFlow()
+
+    private val _rfAvailable = MutableStateFlow(false)
+    val rfAvailable: StateFlow<Boolean> = _rfAvailable.asStateFlow()
 
     private val _rfDeviation = MutableStateFlow<Double?>(null)
     val rfDeviation: StateFlow<Double?> = _rfDeviation.asStateFlow()
@@ -93,7 +89,6 @@ class ForecastViewModel @Inject constructor(
 
         viewModelScope.launch {
             _isLoading.value = true
-            _dataSource.value = "loading"
 
             val district = _selectedDistrict.value
 
@@ -110,9 +105,9 @@ class ForecastViewModel @Inject constructor(
                             return@launch
                         }
 
-                        var finalForecast = physicsForecast
-                        var source = "physics"
+                        _physicsForecast.value = physicsForecast
 
+                        // Always attempt RF inference
                         if (mlInference.isLoaded &&
                             data.historyTemps.size >= 73 &&
                             data.historyHums.size >= 73 &&
@@ -126,49 +121,49 @@ class ForecastViewModel @Inject constructor(
                                     steps = minOf(48, physicsForecast.size)
                                 )
 
-                                val comparableHours = minOf(physicsForecast.size, rfForecasts.size)
+                                // Convert WBGTForecast to HourlyForecast for UI
+                                val rfHourly = rfForecasts.mapIndexed { i, rf ->
+                                    val pf = if (i < physicsForecast.size) physicsForecast[i] else null
+                                    val rfRisk = WbgtCalculator.classifyRisk(rf.wbgt)
+                                    HourlyForecast(
+                                        hour = rf.hour,
+                                        time = pf?.time ?: "",
+                                        temperature = rf.temperature,
+                                        humidity = (rf.humidity).toInt(),
+                                        windSpeed = rf.windSpeed,
+                                        solarRadiation = pf?.solarRadiation ?: 0.0,
+                                        wbgt = rf.wbgt,
+                                        riskLevel = rfRisk.riskLevel
+                                    )
+                                }
+
+                                _rfForecast.value = rfHourly
+                                _rfAvailable.value = true
+
+                                // Compute MAE for informational display
+                                val comparableHours = minOf(physicsForecast.size, rfHourly.size)
                                 if (comparableHours > 0) {
                                     val mae = (0 until comparableHours).sumOf { i ->
-                                        abs(rfForecasts[i].wbgt - physicsForecast[i].wbgt)
+                                        abs(rfHourly[i].wbgt - physicsForecast[i].wbgt)
                                     } / comparableHours
-
                                     _rfDeviation.value = mae
                                     Log.d(TAG, "RF vs Physics MAE: %.2f°C".format(mae))
-
-                                    if (mae <= RF_DEVIATION_THRESHOLD) {
-                                        finalForecast = physicsForecast.mapIndexed { i, pf ->
-                                            if (i < rfForecasts.size) {
-                                                val blendedWbgt = PHYSICS_WEIGHT * pf.wbgt +
-                                                        RF_WEIGHT * rfForecasts[i].wbgt
-                                                val blendedResult = WbgtCalculator.classifyRisk(blendedWbgt)
-                                                pf.copy(
-                                                    wbgt = blendedWbgt,
-                                                    riskLevel = blendedResult.riskLevel
-                                                )
-                                            } else pf
-                                        }
-                                        source = "rf-enhanced"
-                                        Log.d(TAG, "RF enhancement applied (MAE=${"%.2f".format(mae)}°C)")
-                                    } else {
-                                        Log.w(TAG, "RF rejected: MAE ${"%.2f".format(mae)}°C > threshold")
-                                    }
                                 }
                             } catch (e: Exception) {
                                 Log.w(TAG, "RF inference failed: ${e.message}")
+                                _rfAvailable.value = false
                             }
+                        } else {
+                            _rfAvailable.value = false
+                            Log.d(TAG, "RF not available: loaded=${mlInference.isLoaded}, history=${data.historyTemps.size}")
                         }
-
-                        _forecast.value = finalForecast
-                        _dataSource.value = source
                     },
                     onFailure = { error ->
                         Log.e(TAG, "Weather fetch failed: ${error.message}")
-                        _dataSource.value = "error"
                     }
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Unexpected error: ${e.message}")
-                _dataSource.value = "error"
             } finally {
                 _isLoading.value = false
                 _isFetching = false
