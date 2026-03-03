@@ -19,8 +19,11 @@ import javax.inject.Inject
 import kotlin.math.abs
 
 /**
+ * Physics-first architecture with Random Forest validation for the Schedule tab.
  *
- * 1. Fetch real Open-Meteo NWP forecast (with solar radiation) → compute physics WBGT
+ * 1. Fetch real Open-Meteo NWP forecast (with solar radiation) - compute physics WBGT
+ * 2. If RF models loaded and history available, run RF predictions
+ * 3. Compare RF vs physics (MAE threshold) - blend only if RF within 2C
  * 4. Optimize work schedule for daylight hours (06:00-18:00)
  */
 @HiltViewModel
@@ -32,6 +35,7 @@ class ScheduleViewModel @Inject constructor(
 
     companion object {
         private const val TAG = "ScheduleVM"
+        private const val RF_DEVIATION_THRESHOLD = 2.0
         private const val PHYSICS_WEIGHT = 0.7
         private const val RF_WEIGHT = 0.3
     }
@@ -161,6 +165,7 @@ class ScheduleViewModel @Inject constructor(
                                         source = "rf-enhanced"
                                         Log.d(TAG, "RF enhancement applied (MAE=${"%.2f".format(mae)}°C)")
                                     } else {
+                                        Log.w(TAG, "RF rejected: MAE ${"%.2f".format(mae)}°C > threshold")
                                     }
                                 }
                             } catch (e: Exception) {

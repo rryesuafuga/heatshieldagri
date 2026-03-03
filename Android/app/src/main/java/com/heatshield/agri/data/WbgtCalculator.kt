@@ -23,6 +23,10 @@ object WbgtCalculator {
     private const val WBGT_HIGH = 30.0
     private const val WBGT_VERY_HIGH = 32.0
 
+    // Daylight work hours constraint
+    private const val WORK_HOUR_START = 6
+    private const val WORK_HOUR_END = 18
+
     /**
      * Calculate WBGT from environmental factors
      */
@@ -152,10 +156,12 @@ object WbgtCalculator {
         forecast: List<HourlyForecast>,
         workHoursNeeded: Int
     ): WorkSchedule {
-        val hourScores = forecast.map { it.hour to it.wbgt }.sortedBy { it.second }
+        // Filter to daylight hours only (06:00-18:00)
+        val daylightForecast = forecast.filter { it.hour in WORK_HOUR_START..WORK_HOUR_END }
+        val hourScores = daylightForecast.map { it.hour to it.wbgt }.sortedBy { it.second }
 
         val safeHours = hourScores
-            .take(minOf(workHoursNeeded, 12))
+            .take(minOf(workHoursNeeded, hourScores.size))
             .map { it.first }
             .sorted()
 
