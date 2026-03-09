@@ -8,8 +8,11 @@ import {
   Tooltip,
   ResponsiveContainer,
   Cell,
+  LineChart,
+  Line,
+  Legend,
 } from 'recharts';
-import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2, Cpu } from 'lucide-react';
+import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2, Cpu, Beaker } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useHeatShieldML } from '../hooks/useHeatShieldML';
 import {
@@ -20,6 +23,7 @@ import {
   HourlyForecast,
   WorkSchedule,
 } from '../wasm';
+import type { WBGTForecast } from '../ml-inference';
 
 // ---- Helpers ----
 
@@ -81,8 +85,10 @@ function ScheduleVisualization({
   forecast: HourlyForecast[];
   schedule: WorkSchedule;
 }) {
-  // Only show daylight working hours (06:00–18:00)
-  const daylight = forecast.filter((f) => f.hour >= 6 && f.hour < 18);
+  // Show hours present in the forecast (auto-adapts to physics 6-18 or RF 5-19)
+  const minHour = Math.min(...forecast.map((f) => f.hour));
+  const maxHour = Math.max(...forecast.map((f) => f.hour));
+  const daylight = forecast.filter((f) => f.hour >= Math.max(5, minHour) && f.hour <= Math.min(19, maxHour));
   const data = daylight.map((f) => ({
     hour: `${f.hour.toString().padStart(2, '0')}:00`,
     wbgt: f.wbgt,
@@ -245,18 +251,25 @@ async function fetchWeatherData(
 // Max mean absolute deviation (°C) to accept RF over physics
 const RF_DEVIATION_THRESHOLD = 2.0;
 
+// Valid hour range for RF predictions (5:00 AM – 19:00 / 7:00 PM)
+const RF_VALID_HOUR_MIN = 5;
+const RF_VALID_HOUR_MAX = 19;
+
 // ---- Main Component ----
 
 export default function Schedule() {
   const { selectedDistrict, setSelectedDistrict } = useAppStore();
   const [workHoursNeeded, setWorkHoursNeeded] = useState(8);
-  const [forecast, setForecast] = useState<HourlyForecast[]>([]);
+  const [physicsForecast, setPhysicsForecast] = useState<HourlyForecast[]>([]);
+  const [rfForecast, setRfForecast] = useState<HourlyForecast[] | null>(null);
   const [schedule, setSchedule] = useState<WorkSchedule | null>(null);
-  const [dataSource, setDataSource] = useState<'loading' | 'physics' | 'rf-enhanced'>('loading');
+  const [rfSchedule, setRfSchedule] = useState<WorkSchedule | null>(null);
+  const [dataSource, setDataSource] = useState<'loading' | 'physics' | 'rf-available'>('loading');
   const [rfDeviation, setRfDeviation] = useState<number | null>(null);
+  const [rfStatus, setRfStatus] = useState<'loading' | 'valid' | 'out-of-range' | 'high-deviation' | 'error' | 'unavailable'>('loading');
   const isForecastingRef = useRef(false);
 
-  const { isReady, predictMultiStep } = useHeatShieldML();
+  const { isReady, isLoading: mlLoading, predictMultiStep } = useHeatShieldML();
   const districts = getUgandaDistricts();
 
   useEffect(() => {
@@ -271,71 +284,100 @@ export default function Schedule() {
     (async () => {
       try {
         // 1. Always fetch real weather data and compute physics-based WBGT
-        const { physicsForecast, history } = await fetchWeatherData(district.lat, district.lon);
+        const { physicsForecast: pForecast, history } = await fetchWeatherData(district.lat, district.lon);
 
-        if (physicsForecast.length < 12) {
-          throw new Error(`Insufficient forecast data: ${physicsForecast.length} hours`);
+        if (pForecast.length < 12) {
+          throw new Error(`Insufficient forecast data: ${pForecast.length} hours`);
         }
 
-        let finalForecast = physicsForecast;
-        let source: 'physics' | 'rf-enhanced' = 'physics';
-        let deviation: number | null = null;
+        // Always set physics forecast and schedule first
+        setPhysicsForecast(pForecast);
+        setSchedule(optimizeWorkSchedule(pForecast, workHoursNeeded));
+        setDataSource('physics');
 
-        // 2. If RF models are ready and we have enough history, compare
+        // 2. If RF models are ready and we have enough history, run RF separately
         if (isReady && history) {
           try {
             const rfResults = await predictMultiStep(
               history.temps, history.hums, history.winds, 24,
             );
 
-            // Build a map of RF WBGT by hour for comparison
-            const rfByHour = new Map<number, number>();
-            for (const r of rfResults) {
-              rfByHour.set(r.timestamp.getHours(), r.wbgt);
+            // Filter RF results to valid daylight range (5AM–7PM)
+            const rfDaylight = rfResults.filter((r) => {
+              const h = r.timestamp.getHours();
+              return h >= RF_VALID_HOUR_MIN && h < RF_VALID_HOUR_MAX;
+            });
+
+            if (rfDaylight.length === 0) {
+              console.warn('[Schedule] RF has no predictions in valid range (5AM-7PM)');
+              setRfStatus('out-of-range');
+              setRfForecast(null);
+              setRfSchedule(null);
+              return;
             }
 
-            // Compute mean absolute deviation against physics baseline
+            // Build RF forecast as HourlyForecast[] for the valid hours
+            const rfByHour = new Map<number, WBGTForecast>();
+            for (const r of rfResults) {
+              rfByHour.set(r.timestamp.getHours(), r);
+            }
+
+            // Compute mean absolute deviation against physics baseline (daylight hours only)
             let totalDev = 0;
             let matchCount = 0;
-            for (const pf of physicsForecast) {
-              const rfWbgt = rfByHour.get(pf.hour);
-              if (rfWbgt != null) {
-                totalDev += Math.abs(rfWbgt - pf.wbgt);
+            for (const pf of pForecast) {
+              const h = pf.hour;
+              if (h < RF_VALID_HOUR_MIN || h >= RF_VALID_HOUR_MAX) continue;
+              const rfR = rfByHour.get(h);
+              if (rfR != null) {
+                totalDev += Math.abs(rfR.wbgt - pf.wbgt);
                 matchCount++;
               }
             }
             const mae = matchCount > 0 ? totalDev / matchCount : Infinity;
-            deviation = Math.round(mae * 10) / 10;
+            const deviation = Math.round(mae * 10) / 10;
+            setRfDeviation(deviation);
 
             console.log(`[Schedule] RF vs Physics MAE: ${mae.toFixed(2)}°C (threshold: ${RF_DEVIATION_THRESHOLD}°C)`);
 
-            if (mae <= RF_DEVIATION_THRESHOLD) {
-              // RF is close to physics — use RF-enhanced values
-              // Blend: 70% physics + 30% RF for conservative enhancement
-              finalForecast = physicsForecast.map((pf) => {
-                const rfWbgt = rfByHour.get(pf.hour);
-                if (rfWbgt != null) {
-                  return { ...pf, wbgt: Math.round((0.7 * pf.wbgt + 0.3 * rfWbgt) * 10) / 10 };
+            // Build RF HourlyForecast array for valid hours only
+            const rfHourly: HourlyForecast[] = pForecast
+              .filter((pf) => pf.hour >= RF_VALID_HOUR_MIN && pf.hour < RF_VALID_HOUR_MAX)
+              .map((pf) => {
+                const rfR = rfByHour.get(pf.hour);
+                if (rfR != null) {
+                  return {
+                    ...pf,
+                    wbgt: Math.round(rfR.wbgt * 10) / 10,
+                  };
                 }
-                return pf;
+                return pf; // fallback to physics if RF missing for this hour
               });
-              source = 'rf-enhanced';
+
+            if (mae > RF_DEVIATION_THRESHOLD) {
+              console.warn(`[Schedule] RF deviation high (${mae.toFixed(1)}°C) — showing for comparison but using physics for scheduling`);
+              setRfStatus('high-deviation');
+              setRfForecast(rfHourly);
+              // Still build RF schedule for display, but mark it as high-deviation
+              setRfSchedule(optimizeWorkSchedule(rfHourly, workHoursNeeded));
             } else {
-              console.warn(`[Schedule] RF deviation too high (${mae.toFixed(1)}°C), using physics only`);
+              setRfStatus('valid');
+              setRfForecast(rfHourly);
+              setRfSchedule(optimizeWorkSchedule(rfHourly, workHoursNeeded));
+              setDataSource('rf-available');
             }
           } catch (rfErr) {
-            console.warn('[Schedule] RF inference failed, using physics only:', rfErr);
+            console.warn('[Schedule] RF inference failed:', rfErr);
+            setRfStatus('error');
+            setRfForecast(null);
+            setRfSchedule(null);
           }
+        } else if (!isReady && !mlLoading) {
+          setRfStatus('unavailable');
         }
-
-        setForecast(finalForecast);
-        setSchedule(optimizeWorkSchedule(finalForecast, workHoursNeeded));
-        setDataSource(source);
-        setRfDeviation(deviation);
       } catch (err: any) {
         console.error('[Schedule] Failed to fetch weather data:', err);
-        // Unable to reach Open-Meteo — no data to show
-        setForecast([]);
+        setPhysicsForecast([]);
         setSchedule(null);
         setDataSource('loading');
       } finally {
@@ -344,12 +386,27 @@ export default function Schedule() {
     })();
   }, [selectedDistrict, isReady, predictMultiStep]);
 
-  // Re-optimize schedule when work hours slider changes (no re-fetch needed)
+  // Re-optimize schedules when work hours slider changes (no re-fetch needed)
   useEffect(() => {
-    if (forecast.length > 0) {
-      setSchedule(optimizeWorkSchedule(forecast, workHoursNeeded));
+    if (physicsForecast.length > 0) {
+      setSchedule(optimizeWorkSchedule(physicsForecast, workHoursNeeded));
+    }
+    if (rfForecast && rfForecast.length > 0) {
+      setRfSchedule(optimizeWorkSchedule(rfForecast, workHoursNeeded));
     }
   }, [workHoursNeeded]);
+
+  // Build comparison chart data for overlay visualization
+  const comparisonData = physicsForecast
+    .filter((f) => f.hour >= 5 && f.hour < 19)
+    .map((pf) => {
+      const rfMatch = rfForecast?.find((rf) => rf.hour === pf.hour);
+      return {
+        hour: `${pf.hour.toString().padStart(2, '0')}:00`,
+        physics: pf.wbgt,
+        rf: rfMatch ? rfMatch.wbgt : undefined,
+      };
+    });
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -358,26 +415,11 @@ export default function Schedule() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-3xl font-bold text-gray-900">Work Schedule Optimizer</h1>
-            {dataSource === 'rf-enhanced' ? (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
-                <Cpu className="h-3 w-3" /> RF-Enhanced
-              </span>
-            ) : dataSource === 'physics' ? (
-              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
-                Physics Model
-              </span>
-            ) : (
-              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
-                Loading...
-              </span>
-            )}
           </div>
           <p className="text-gray-500 mt-1">
-            {dataSource === 'rf-enhanced'
-              ? `Real weather data + RF enhancement (deviation: ${rfDeviation}°C)`
-              : dataSource === 'physics'
-              ? `Physics-based WBGT from real Open-Meteo weather forecast${rfDeviation != null ? ` (RF rejected: ${rfDeviation}°C deviation)` : ''}`
-              : 'Fetching weather data...'}
+            {dataSource === 'loading'
+              ? 'Fetching weather data...'
+              : 'Physics-first architecture with ISO 7243 compliance — RF validates and enhances predictions'}
           </p>
         </div>
         <div className="flex items-center space-x-4">
@@ -398,8 +440,24 @@ export default function Schedule() {
         </div>
       </div>
 
+      {/* ═══════════════════════════════════════════════════════════════
+          SECTION 1: PHYSICS MODEL (ISO 7243)
+          ═══════════════════════════════════════════════════════════════ */}
       {schedule && (
         <>
+          <div className="mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <Beaker className="h-5 w-5 text-blue-600" />
+              <h2 className="text-xl font-bold text-gray-900">Physics Model — ISO 7243 WBGT</h2>
+              <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-700">
+                Primary
+              </span>
+            </div>
+            <p className="text-sm text-gray-500 ml-7">
+              WBGT = 0.7 × T<sub>w</sub> + 0.2 × T<sub>g</sub> + 0.1 × T<sub>a</sub> — Stull (2011) wet-bulb approximation, Liljegren globe temperature (Newton-Raphson iterative solver)
+            </p>
+          </div>
+
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <div className="card text-center">
@@ -452,12 +510,12 @@ export default function Schedule() {
             </div>
           </div>
 
-          {/* Schedule Visualization */}
+          {/* Physics Schedule Visualization */}
           <div className="card mb-8">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              WBGT Forecast & Recommended Work Hours (06:00 – 18:00)
+              Physics WBGT Forecast & Recommended Work Hours (06:00 – 18:00)
             </h2>
-            <ScheduleVisualization forecast={forecast} schedule={schedule} />
+            <ScheduleVisualization forecast={physicsForecast} schedule={schedule} />
             <div className="flex items-center justify-center mt-4 space-x-6">
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-4 bg-green-500 rounded" />
@@ -470,13 +528,13 @@ export default function Schedule() {
             </div>
           </div>
 
-          {/* Hour Grid — daylight working hours only */}
+          {/* Physics Hour Grid */}
           <div className="card mb-8">
             <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              Hourly Breakdown (06:00 – 18:00)
+              Physics Hourly Breakdown (06:00 – 18:00)
             </h2>
             <div className="grid grid-cols-6 md:grid-cols-6 lg:grid-cols-12 gap-3">
-              {forecast.filter((f) => f.hour >= 6 && f.hour < 18).map((f) => (
+              {physicsForecast.filter((f) => f.hour >= 6 && f.hour < 18).map((f) => (
                 <TimeSlot
                   key={f.hour}
                   hour={f.hour}
@@ -487,12 +545,183 @@ export default function Schedule() {
             </div>
           </div>
 
-          {/* Recommended Schedule */}
+          {/* ═══════════════════════════════════════════════════════════════
+              SECTION 2: RANDOM FOREST ML PREDICTIONS
+              ═══════════════════════════════════════════════════════════════ */}
+          <div className="border-t-2 border-gray-200 pt-8 mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <Cpu className="h-5 w-5 text-green-600" />
+              <h2 className="text-xl font-bold text-gray-900">Random Forest ML Predictions</h2>
+              {rfStatus === 'valid' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                  <CheckCircle2 className="h-3 w-3" /> Valid (MAE: {rfDeviation}°C)
+                </span>
+              )}
+              {rfStatus === 'high-deviation' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
+                  <AlertCircle className="h-3 w-3" /> High Deviation ({rfDeviation}°C)
+                </span>
+              )}
+              {rfStatus === 'out-of-range' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                  <AlertCircle className="h-3 w-3" /> Out of Range
+                </span>
+              )}
+              {(rfStatus === 'loading' || rfStatus === 'unavailable') && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+                  {mlLoading ? 'Loading ONNX models...' : rfStatus === 'loading' ? 'Waiting...' : 'Models unavailable'}
+                </span>
+              )}
+              {rfStatus === 'error' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                  <AlertCircle className="h-3 w-3" /> Inference Error
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 ml-7">
+              3 ONNX Random Forest models (30 trees, max depth 10) with 17-feature engineering pipeline — deployed via ONNX Runtime for browser inference. Valid range: 05:00 – 19:00.
+            </p>
+          </div>
+
+          {rfForecast && rfSchedule ? (
+            <>
+              {/* Comparison Chart: Physics vs RF overlay */}
+              <div className="card mb-8">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  Physics vs Random Forest WBGT Comparison (05:00 – 19:00)
+                </h2>
+                {rfStatus === 'high-deviation' && (
+                  <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+                    <AlertCircle className="h-4 w-4 inline mr-1" />
+                    RF deviation is above {RF_DEVIATION_THRESHOLD}°C threshold — physics model is used for scheduling. RF shown for comparison only.
+                  </div>
+                )}
+                <div className="h-64">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={comparisonData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                      <XAxis dataKey="hour" tick={{ fontSize: 10 }} />
+                      <YAxis domain={[15, 40]} tick={{ fontSize: 12 }} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'white',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '8px',
+                        }}
+                        formatter={(value: number, name: string) => [
+                          `${value.toFixed(1)}°C`,
+                          name === 'physics' ? 'Physics (ISO 7243)' : 'Random Forest',
+                        ]}
+                      />
+                      <Legend />
+                      <Line
+                        type="monotone"
+                        dataKey="physics"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={{ r: 3 }}
+                        name="Physics (ISO 7243)"
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="rf"
+                        stroke="#22c55e"
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                        dot={{ r: 3 }}
+                        name="Random Forest"
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex items-center justify-center mt-4 space-x-6">
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-0.5 bg-blue-500" />
+                    <span className="text-sm text-gray-600">Physics WBGT</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <div className="w-6 h-0.5 bg-green-500" style={{ borderTop: '2px dashed #22c55e' }} />
+                    <span className="text-sm text-gray-600">RF WBGT</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* RF Schedule Visualization */}
+              <div className="card mb-8">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  RF WBGT Forecast & Work Hours (05:00 – 19:00)
+                </h2>
+                <ScheduleVisualization forecast={rfForecast} schedule={rfSchedule} />
+              </div>
+
+              {/* RF Hour Grid */}
+              <div className="card mb-8">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  RF Hourly Breakdown (05:00 – 19:00)
+                </h2>
+                <div className="grid grid-cols-7 md:grid-cols-7 lg:grid-cols-14 gap-3">
+                  {rfForecast.map((f) => (
+                    <TimeSlot
+                      key={f.hour}
+                      hour={f.hour}
+                      wbgt={f.wbgt}
+                      isRecommended={rfSchedule.safe_hours.includes(f.hour)}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* RF Summary Cards */}
+              <div className="card mb-8">
+                <h3 className="text-md font-semibold text-gray-700 mb-3">RF Schedule Summary</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center text-sm">
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">{rfSchedule.total_safe_hours}</div>
+                    <div className="text-gray-500">Safe Hours</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {rfSchedule.recommended_start.toString().padStart(2, '0')}:00
+                    </div>
+                    <div className="text-gray-500">Start</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {rfSchedule.recommended_end.toString().padStart(2, '0')}:00
+                    </div>
+                    <div className="text-gray-500">End</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {rfSchedule.productivity_score.toFixed(0)}%
+                    </div>
+                    <div className="text-gray-500">Productivity</div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="card mb-8 text-center py-8">
+              <Cpu className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">
+                {mlLoading
+                  ? 'Loading ONNX Random Forest models...'
+                  : rfStatus === 'out-of-range'
+                  ? 'RF predictions fell outside the valid 05:00–19:00 range. Physics model is used for scheduling.'
+                  : rfStatus === 'error'
+                  ? 'RF inference encountered an error. Physics model is used for scheduling.'
+                  : 'Random Forest models not yet available. Physics model is used for scheduling.'}
+              </p>
+            </div>
+          )}
+
+          {/* Recommended Schedule (always uses physics) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="card">
               <h2 className="text-lg font-semibold text-gray-900 mb-4">
                 Recommended Daily Schedule
               </h2>
+              <p className="text-xs text-gray-400 mb-3">Based on Physics Model (ISO 7243)</p>
               <div className="space-y-3">
                 {schedule.recommended_start < 11 && (
                   <WorkBlock
