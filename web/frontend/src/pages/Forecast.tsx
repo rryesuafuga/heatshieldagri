@@ -21,6 +21,9 @@ import { useWeather, transformToWbgtForecast } from '../hooks/useWeather';
 // If WASM init fails, only this panel breaks — the rest of the Forecast page works.
 const MLForecastPanel = React.lazy(() => import('./MLForecastPanel'));
 
+// Lazy-load the PCE panel — lightweight (~20 KB JSON, no WASM), but lazy for consistency.
+const PCEForecastPanel = React.lazy(() => import('./PCEForecastPanel'));
+
 // Error boundary: catches crashes inside MLForecastPanel and shows a fallback
 // instead of taking down the entire page.
 class MLErrorBoundary extends Component<
@@ -451,6 +454,27 @@ export default function Forecast() {
             }
           >
             <MLForecastPanel
+              district={selectedDistrict?.name || 'Kampala'}
+              forecastHours={24}
+            />
+          </Suspense>
+        </MLErrorBoundary>
+      </div>
+
+      {/* PCE Surrogate Forecast — lazy-loaded with error boundary */}
+      <div className="mt-8">
+        <MLErrorBoundary>
+          <Suspense
+            fallback={
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 text-purple-600 animate-spin" />
+                  <span className="text-sm text-gray-600">Loading PCE surrogate module...</span>
+                </div>
+              </div>
+            }
+          >
+            <PCEForecastPanel
               district={selectedDistrict?.name || 'Kampala'}
               forecastHours={24}
             />
