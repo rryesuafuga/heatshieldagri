@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "generated_at": "2026-03-01T18:37:31.378914",
+    "generated_at": "2026-03-18T13:32:06.194972",
     "generated_in": "Google Colab",
     "training_districts": [
       "Kampala",
@@ -163,7 +163,7 @@
         },
         "train_samples": 172344,
         "test_samples": 2879,
-        "train_time_seconds": 61.8
+        "train_time_seconds": 55.9
       },
       "humidity": {
         "onnx_file": "humidity_model.onnx",
@@ -196,7 +196,7 @@
         },
         "train_samples": 172344,
         "test_samples": 2879,
-        "train_time_seconds": 34.0
+        "train_time_seconds": 34.8
       },
       "windspeed": {
         "onnx_file": "windspeed_model.onnx",
@@ -229,7 +229,7 @@
         },
         "train_samples": 172344,
         "test_samples": 2879,
-        "train_time_seconds": 43.7
+        "train_time_seconds": 41.2
       }
     }
   },
@@ -281,7 +281,7 @@
         "doy_cos": 0.0001,
         "doy_sin": 0.0001
       },
-      "train_time_seconds": 61.8
+      "train_time_seconds": 55.9
     },
     {
       "variable": "humidity",
@@ -330,7 +330,7 @@
         "lag_6": 0.0001,
         "delta_24h": 0.0001
       },
-      "train_time_seconds": 34.0
+      "train_time_seconds": 34.8
     },
     {
       "variable": "windspeed",
@@ -379,7 +379,7 @@
         "lag_6": 0.0015,
         "delta_24h": 0.0013
       },
-      "train_time_seconds": 43.7
+      "train_time_seconds": 41.2
     }
   ],
   "data_statistics": {
