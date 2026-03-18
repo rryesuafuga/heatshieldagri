@@ -156,7 +156,12 @@ class PCEModel {
    * Evaluate orthonormal Legendre polynomials P̂₀(ξ)..P̂_maxK(ξ)
    * via the three-term recurrence:
    *   (k+1)·P_{k+1}(x) = (2k+1)·x·P_k(x) - k·P_{k-1}(x)
-   * then normalize: P̂_k = √((2k+1)/2) · P_k
+   * then normalize: P̂_k = √(2k+1) · P_k
+   *
+   * Convention: orthonormal w.r.t. the uniform probability measure
+   * (1/2)dx on [-1,1], i.e. ∫₋₁¹ P̂_m P̂_n · (1/2)dx = δ_{mn}.
+   * This matches standard PCE packages (OpenTURNS, UQLab, Chaospy).
+   * P̂₀ = 1, P̂₁ = √3·x, P̂₂ = √5·(3x²−1)/2, etc.
    */
   private legendreAll(xi: number, maxK: number): Float64Array {
     const P = new Float64Array(maxK + 1);
@@ -165,9 +170,9 @@ class PCEModel {
     for (let k = 1; k < maxK; k++) {
       P[k + 1] = ((2 * k + 1) * xi * P[k] - k * P[k - 1]) / (k + 1);
     }
-    // Normalize to orthonormal Legendre
+    // Normalize to orthonormal Legendre w.r.t. uniform probability measure
     for (let k = 0; k <= maxK; k++) {
-      P[k] *= Math.sqrt((2 * k + 1) / 2);
+      P[k] *= Math.sqrt(2 * k + 1);
     }
     return P;
   }
