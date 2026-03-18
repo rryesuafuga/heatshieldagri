@@ -12,9 +12,10 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2, Cpu, Beaker } from 'lucide-react';
+import { Clock, Sun, Coffee, Droplets, AlertCircle, CheckCircle2, Cpu, Beaker, Zap } from 'lucide-react';
 import { useAppStore } from '../store';
 import { useHeatShieldML } from '../hooks/useHeatShieldML';
+import { useHeatShieldPCE } from '../hooks/useHeatShieldPCE';
 import {
   calculateWbgt,
   optimizeWorkSchedule,
@@ -24,6 +25,7 @@ import {
   WorkSchedule,
 } from '../wasm';
 import type { WBGTForecast } from '../ml-inference';
+import type { PCEForecast } from '../pce-inference';
 
 // ---- Helpers ----
 
@@ -267,9 +269,21 @@ export default function Schedule() {
   const [dataSource, setDataSource] = useState<'loading' | 'physics' | 'rf-available'>('loading');
   const [rfDeviation, setRfDeviation] = useState<number | null>(null);
   const [rfStatus, setRfStatus] = useState<'loading' | 'valid' | 'out-of-range' | 'high-deviation' | 'error' | 'unavailable'>('loading');
+  const [pceForecast, setPceForecast] = useState<HourlyForecast[] | null>(null);
+  const [pceSchedule, setPceSchedule] = useState<WorkSchedule | null>(null);
+  const [pceDeviation, setPceDeviation] = useState<number | null>(null);
+  const [pceStatus, setPceStatus] = useState<'loading' | 'valid' | 'high-deviation' | 'error' | 'unavailable'>('loading');
   const isForecastingRef = useRef(false);
 
   const { isReady, isLoading: mlLoading, predictMultiStep } = useHeatShieldML();
+  const {
+    isReady: pceReady,
+    isLoading: pceLoading,
+    predictMultiStep: pcePredictMultiStep,
+    getSobolIndices,
+    getSparsityInfo,
+    modelSizeKB: pceModelSizeKB,
+  } = useHeatShieldPCE();
   const districts = getUgandaDistricts();
 
   useEffect(() => {
@@ -375,6 +389,81 @@ export default function Schedule() {
         } else if (!isReady && !mlLoading) {
           setRfStatus('unavailable');
         }
+
+        // 3. If PCE models are ready and we have enough history, run PCE separately
+        if (pceReady && history) {
+          try {
+            const pceResults = await pcePredictMultiStep(
+              history.temps, history.hums, history.winds, 24,
+            );
+
+            // Filter to valid daylight range (same as RF: 5AM–7PM)
+            const pceDaylight = pceResults.filter((r) => {
+              const h = r.timestamp.getHours();
+              return h >= RF_VALID_HOUR_MIN && h < RF_VALID_HOUR_MAX;
+            });
+
+            if (pceDaylight.length === 0) {
+              console.warn('[Schedule] PCE has no predictions in valid range (5AM-7PM)');
+              setPceStatus('error');
+              setPceForecast(null);
+              setPceSchedule(null);
+            } else {
+              // Build PCE forecast as HourlyForecast[]
+              const pceByHour = new Map<number, PCEForecast>();
+              for (const r of pceResults) {
+                pceByHour.set(r.timestamp.getHours(), r);
+              }
+
+              // Compute MAE against physics baseline
+              let totalDev = 0;
+              let matchCount = 0;
+              for (const pf of pForecast) {
+                const h = pf.hour;
+                if (h < RF_VALID_HOUR_MIN || h >= RF_VALID_HOUR_MAX) continue;
+                const pceR = pceByHour.get(h);
+                if (pceR != null) {
+                  totalDev += Math.abs(pceR.wbgt - pf.wbgt);
+                  matchCount++;
+                }
+              }
+              const pceMae = matchCount > 0 ? totalDev / matchCount : Infinity;
+              const pceDevVal = Math.round(pceMae * 10) / 10;
+              setPceDeviation(pceDevVal);
+
+              console.log(`[Schedule] PCE vs Physics MAE: ${pceMae.toFixed(2)}°C`);
+
+              // Build PCE HourlyForecast array
+              const pceHourly: HourlyForecast[] = pForecast
+                .filter((pf) => pf.hour >= RF_VALID_HOUR_MIN && pf.hour < RF_VALID_HOUR_MAX)
+                .map((pf) => {
+                  const pceR = pceByHour.get(pf.hour);
+                  if (pceR != null) {
+                    return {
+                      ...pf,
+                      wbgt: Math.round(pceR.wbgt * 10) / 10,
+                    };
+                  }
+                  return pf;
+                });
+
+              if (pceMae > RF_DEVIATION_THRESHOLD) {
+                setPceStatus('high-deviation');
+              } else {
+                setPceStatus('valid');
+              }
+              setPceForecast(pceHourly);
+              setPceSchedule(optimizeWorkSchedule(pceHourly, workHoursNeeded));
+            }
+          } catch (pceErr) {
+            console.warn('[Schedule] PCE inference failed:', pceErr);
+            setPceStatus('error');
+            setPceForecast(null);
+            setPceSchedule(null);
+          }
+        } else if (!pceReady && !pceLoading) {
+          setPceStatus('unavailable');
+        }
       } catch (err: any) {
         console.error('[Schedule] Failed to fetch weather data:', err);
         setPhysicsForecast([]);
@@ -384,7 +473,7 @@ export default function Schedule() {
         isForecastingRef.current = false;
       }
     })();
-  }, [selectedDistrict, isReady, predictMultiStep]);
+  }, [selectedDistrict, isReady, predictMultiStep, pceReady, pcePredictMultiStep]);
 
   // Re-optimize schedules when work hours slider changes (no re-fetch needed)
   useEffect(() => {
@@ -394,17 +483,22 @@ export default function Schedule() {
     if (rfForecast && rfForecast.length > 0) {
       setRfSchedule(optimizeWorkSchedule(rfForecast, workHoursNeeded));
     }
+    if (pceForecast && pceForecast.length > 0) {
+      setPceSchedule(optimizeWorkSchedule(pceForecast, workHoursNeeded));
+    }
   }, [workHoursNeeded]);
 
-  // Build comparison chart data for overlay visualization
+  // Build comparison chart data for overlay visualization (Physics vs RF vs PCE)
   const comparisonData = physicsForecast
     .filter((f) => f.hour >= 5 && f.hour < 19)
     .map((pf) => {
       const rfMatch = rfForecast?.find((rf) => rf.hour === pf.hour);
+      const pceMatch = pceForecast?.find((pc) => pc.hour === pf.hour);
       return {
         hour: `${pf.hour.toString().padStart(2, '0')}:00`,
         physics: pf.wbgt,
         rf: rfMatch ? rfMatch.wbgt : undefined,
+        pce: pceMatch ? pceMatch.wbgt : undefined,
       };
     });
 
@@ -588,7 +682,7 @@ export default function Schedule() {
               {/* Comparison Chart: Physics vs RF overlay */}
               <div className="card mb-8">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">
-                  Physics vs Random Forest WBGT Comparison (05:00 – 19:00)
+                  Physics vs RF{pceForecast ? ' vs PCE' : ''} WBGT Comparison (05:00 – 19:00)
                 </h2>
                 {rfStatus === 'high-deviation' && (
                   <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
@@ -610,7 +704,7 @@ export default function Schedule() {
                         }}
                         formatter={(value: number, name: string) => [
                           `${value.toFixed(1)}°C`,
-                          name === 'physics' ? 'Physics (ISO 7243)' : 'Random Forest',
+                          name === 'physics' ? 'Physics (ISO 7243)' : name === 'pce' ? 'PCE Surrogate' : 'Random Forest',
                         ]}
                       />
                       <Legend />
@@ -631,6 +725,17 @@ export default function Schedule() {
                         dot={{ r: 3 }}
                         name="Random Forest"
                       />
+                      {pceForecast && (
+                        <Line
+                          type="monotone"
+                          dataKey="pce"
+                          stroke="#a855f7"
+                          strokeWidth={2}
+                          strokeDasharray="3 3"
+                          dot={{ r: 3 }}
+                          name="PCE Surrogate"
+                        />
+                      )}
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -643,6 +748,12 @@ export default function Schedule() {
                     <div className="w-6 h-0.5 bg-green-500" style={{ borderTop: '2px dashed #22c55e' }} />
                     <span className="text-sm text-gray-600">RF WBGT</span>
                   </div>
+                  {pceForecast && (
+                    <div className="flex items-center space-x-2">
+                      <div className="w-6 h-0.5 bg-purple-500" style={{ borderTop: '2px dashed #a855f7' }} />
+                      <span className="text-sm text-gray-600">PCE WBGT</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -711,6 +822,194 @@ export default function Schedule() {
                   : rfStatus === 'error'
                   ? 'RF inference encountered an error. Physics model is used for scheduling.'
                   : 'Random Forest models not yet available. Physics model is used for scheduling.'}
+              </p>
+            </div>
+          )}
+
+          {/* ═══════════════════════════════════════════════════════════════
+              SECTION 3: PCE SURROGATE (Sparse Polynomial Chaos Expansion)
+              ═══════════════════════════════════════════════════════════════ */}
+          <div className="border-t-2 border-gray-200 pt-8 mb-6">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="h-5 w-5 text-purple-600" />
+              <h2 className="text-xl font-bold text-gray-900">PCE Surrogate — Sparse Polynomial Chaos Expansion</h2>
+              {pceStatus === 'valid' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">
+                  <CheckCircle2 className="h-3 w-3" /> Valid (MAE: {pceDeviation}°C)
+                </span>
+              )}
+              {pceStatus === 'high-deviation' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
+                  <AlertCircle className="h-3 w-3" /> High Deviation ({pceDeviation}°C)
+                </span>
+              )}
+              {(pceStatus === 'loading' || pceStatus === 'unavailable') && (
+                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+                  {pceLoading ? 'Loading PCE models...' : pceStatus === 'loading' ? 'Waiting...' : 'Models unavailable'}
+                </span>
+              )}
+              {pceStatus === 'error' && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">
+                  <AlertCircle className="h-3 w-3" /> Inference Error
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 ml-7">
+              LARS-selected sparse Legendre polynomials trained on RF teacher — ~{pceModelSizeKB} KB total (vs ~6 MB ONNX), zero WASM dependencies, pure TypeScript evaluation.
+            </p>
+          </div>
+
+          {pceForecast && pceSchedule ? (
+            <>
+              {/* PCE Schedule Visualization */}
+              <div className="card mb-8">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  PCE WBGT Forecast & Work Hours (05:00 – 19:00)
+                </h2>
+                <ScheduleVisualization forecast={pceForecast} schedule={pceSchedule} />
+              </div>
+
+              {/* PCE Hour Grid */}
+              <div className="card mb-8">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  PCE Hourly Breakdown (05:00 – 19:00)
+                </h2>
+                <div className="grid grid-cols-7 md:grid-cols-7 lg:grid-cols-14 gap-3">
+                  {pceForecast.map((f) => (
+                    <TimeSlot
+                      key={f.hour}
+                      hour={f.hour}
+                      wbgt={f.wbgt}
+                      isRecommended={pceSchedule.safe_hours.includes(f.hour)}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* PCE Model Info: Compression + Sobol Sensitivity + Sparsity */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                {/* Compression Stats */}
+                <div className="card">
+                  <h3 className="text-md font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                    <Zap className="h-4 w-4 text-purple-500" /> Model Compression
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">RF ONNX (original)</span>
+                      <span className="font-mono text-gray-700">~6,188 KB</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">PCE JSON (surrogate)</span>
+                      <span className="font-mono text-purple-700">~{pceModelSizeKB} KB</span>
+                    </div>
+                    <div className="border-t pt-2 flex justify-between font-semibold">
+                      <span className="text-gray-600">Compression ratio</span>
+                      <span className="text-purple-700">{(6188 / Math.max(pceModelSizeKB, 1)).toFixed(0)}×</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">WASM dependency</span>
+                      <span className="font-mono text-green-600">None</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sobol Sensitivity Indices */}
+                <div className="card">
+                  <h3 className="text-md font-semibold text-gray-700 mb-3">Sobol Sensitivity — Temperature</h3>
+                  <div className="space-y-1.5 text-sm">
+                    {(() => {
+                      const sobol = getSobolIndices('temperature');
+                      if (!sobol) return <p className="text-gray-400">Not available</p>;
+                      const sorted = Object.entries(sobol.totalOrder)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 6);
+                      return sorted.map(([feat, val]) => (
+                        <div key={feat} className="flex items-center gap-2">
+                          <span className="text-gray-500 w-28 truncate text-xs">{feat}</span>
+                          <div className="flex-1 bg-gray-100 rounded-full h-2">
+                            <div
+                              className="bg-purple-500 h-2 rounded-full"
+                              style={{ width: `${Math.min(val * 100, 100)}%` }}
+                            />
+                          </div>
+                          <span className="font-mono text-xs text-gray-600 w-10 text-right">
+                            {(val * 100).toFixed(1)}%
+                          </span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+
+                {/* Sparsity Info */}
+                <div className="card">
+                  <h3 className="text-md font-semibold text-gray-700 mb-3">Sparsity (LARS Selection)</h3>
+                  <div className="space-y-3 text-sm">
+                    {(() => {
+                      const info = getSparsityInfo();
+                      if (!info || Object.keys(info).length === 0) return <p className="text-gray-400">Not available</p>;
+                      return Object.entries(info).map(([name, s]) => (
+                        <div key={name}>
+                          <div className="flex justify-between mb-1">
+                            <span className="text-gray-600 capitalize">{name}</span>
+                            <span className="font-mono text-purple-700">
+                              {s.active}/{s.candidates} terms
+                            </span>
+                          </div>
+                          <div className="bg-gray-100 rounded-full h-2">
+                            <div
+                              className="bg-purple-400 h-2 rounded-full"
+                              style={{ width: `${(1 - s.sparsity) * 100}%` }}
+                            />
+                          </div>
+                          <div className="text-xs text-gray-400 mt-0.5">
+                            {(s.sparsity * 100).toFixed(1)}% sparsity
+                          </div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+
+              {/* PCE Summary Cards */}
+              <div className="card mb-8">
+                <h3 className="text-md font-semibold text-gray-700 mb-3">PCE Schedule Summary</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center text-sm">
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">{pceSchedule.total_safe_hours}</div>
+                    <div className="text-gray-500">Safe Hours</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {pceSchedule.recommended_start.toString().padStart(2, '0')}:00
+                    </div>
+                    <div className="text-gray-500">Start</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {pceSchedule.recommended_end.toString().padStart(2, '0')}:00
+                    </div>
+                    <div className="text-gray-500">End</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-gray-900">
+                      {pceSchedule.productivity_score.toFixed(0)}%
+                    </div>
+                    <div className="text-gray-500">Productivity</div>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="card mb-8 text-center py-8">
+              <Zap className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">
+                {pceLoading
+                  ? 'Loading PCE surrogate models (~20 KB)...'
+                  : pceStatus === 'error'
+                  ? 'PCE inference encountered an error. Physics model is used for scheduling.'
+                  : 'PCE surrogate models not yet available. Physics model is used for scheduling.'}
               </p>
             </div>
           )}
