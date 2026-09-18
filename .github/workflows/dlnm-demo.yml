@@ -1,0 +1,71 @@
+# Re-runs the DLNM demonstration whenever its folder changes.
+# GitHub Actions only discovers workflows in the repository root .github/workflows/,
+# so this file must stay here — not inside the project folder it builds.
+name: dlnm-demo
+
+on:
+  push:
+    paths:
+      - "dlnm/research/temperature-mortality-dlnm/**"
+      - ".github/workflows/dlnm-demo.yml"
+  pull_request:
+    paths:
+      - "dlnm/research/temperature-mortality-dlnm/**"
+      - ".github/workflows/dlnm-demo.yml"
+  workflow_dispatch:
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dlnm/research/temperature-mortality-dlnm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: "release"
+          use-public-rspm: true
+
+      # If a lockfile has been committed (see R/make_renv_lock.R), restore the
+      # exact pinned versions. Otherwise install the current releases.
+      - name: Check for a lockfile
+        id: lock
+        run: |
+          if [ -f renv.lock ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Restore pinned package versions (renv.lock)
+        if: steps.lock.outputs.found == 'true'
+        run: Rscript -e 'if (!requireNamespace("renv", quietly = TRUE)) install.packages("renv"); renv::restore(prompt = FALSE)'
+
+      - name: Install R packages (no lockfile - current releases)
+        if: steps.lock.outputs.found == 'false'
+        run: Rscript -e 'install.packages(c("dlnm", "gnm", "tsModel", "rmarkdown"))'
+
+      - name: Run the full pipeline
+        run: Rscript run_all.R
+
+      - name: Check the attributable-fraction code against the reference function
+        run: Rscript R/99_validate_attributable.R
+
+      # Tier 2 ships no real data, so the synthetic generator is the only thing
+      # keeping that code honest. Run it (base R only, no extra packages).
+      - name: Generate the Tier-2 synthetic DHS stand-in
+        run: Rscript data-raw/make_synthetic_dhs.R
+
+      - name: Upload report, figures and tables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dlnm-demo-outputs
+          path: |
+            dlnm/research/temperature-mortality-dlnm/report/report.md
+            dlnm/research/temperature-mortality-dlnm/outputs/figures
+            dlnm/research/temperature-mortality-dlnm/outputs/tables

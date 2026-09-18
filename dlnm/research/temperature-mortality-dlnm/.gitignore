@@ -15,8 +15,18 @@ report/report_files/
 renv/library/
 renv/staging/
 
+# generated synthetic data (rebuilt by data-raw/make_synthetic_dhs.R)
+data-raw/synthetic/
+
 # belt and braces: restricted data formats never belong here
 *.dta
 *.sav
 *.DHS
 data/restricted/
+
+# raw GPS / cluster coordinates from real surveys
+*.shp
+*.shx
+*.dbf
+*GPS*.csv
+*GE*.zip

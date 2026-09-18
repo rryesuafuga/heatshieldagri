@@ -58,12 +58,17 @@ install.packages(c("dlnm", "gnm", "tsModel", "rmarkdown"))
 ```
 
 ```bash
-cd research/temperature-mortality-dlnm
+cd dlnm/research/temperature-mortality-dlnm
 Rscript run_all.R        # about one minute; writes outputs/ and report/report.md
 ```
 
 In RStudio, open `temperature-mortality-dlnm.Rproj` and run `source("run_all.R")`.
-To pin package versions: `renv::init()` then `renv::snapshot()`, and commit `renv.lock`.
+
+To pin package versions, run `Rscript R/make_renv_lock.R` once and commit the
+`renv.lock` it writes. CI then restores those exact versions automatically; with
+no lockfile present it installs the current CRAN releases instead. No lockfile is
+committed here, because a valid one has to be produced by `renv::snapshot()` on a
+working installation so that every version and hash is real.
 
 Optional check that the attributable-fraction code matches the method authors' reference
 function (downloaded to a temporary file, never stored here):
@@ -75,8 +80,9 @@ Rscript R/99_validate_attributable.R
 ## Layout
 
 ```
-temperature-mortality-dlnm/
+dlnm/research/temperature-mortality-dlnm/
 |-- README.md
+|-- LICENSE                    MIT (code only; data licences listed separately)
 |-- run_all.R                  one command reproduces everything
 |-- temperature-mortality-dlnm.Rproj
 |-- CITATION.cff
@@ -84,8 +90,11 @@ temperature-mortality-dlnm/
 |   |-- 00_config.R            all analysis choices
 |   |-- 00_functions.R         cross-basis, MMT, QAIC, attributable burden
 |   |-- 01_data.R ... 07_figures.R
-|   `-- 99_validate_attributable.R
+|   |-- 99_validate_attributable.R
+|   `-- make_renv_lock.R       run once to pin package versions
 |-- data/README.md             provenance and licence; no data files
+|-- data-raw/
+|   `-- make_synthetic_dhs.R   Tier 2: synthetic DHS stand-in (git-ignored output)
 |-- outputs/
 |   |-- figures/               committed (the report links to them)
 |   `-- tables/                committed CSVs
@@ -94,7 +103,8 @@ temperature-mortality-dlnm/
     `-- report.md              rendered; GitHub displays it directly
 ```
 
-Continuous integration: `.github/workflows/dlnm-demo.yml` (repository root) re-runs the whole
+Continuous integration: [`.github/workflows/dlnm-demo.yml`](../../../.github/workflows/dlnm-demo.yml)
+at the **repository root** (GitHub Actions only discovers workflows there) re-runs the whole
 pipeline whenever this folder changes.
 
 ## Methods references
@@ -107,4 +117,7 @@ pipeline whenever this folder changes.
 
 ## Licence
 
-Code: same licence as this repository. Data: not redistributed; see the dlnm package.
+Code: [MIT](LICENSE). Data: not redistributed. `chicagoNMMAPS` is loaded at run time from the
+dlnm package (GPL >= 2); `attrdl.R` is downloaded to a temporary file when the optional
+validation script runs and is never stored here; Tier-2 DHS data are synthetic only. Details in
+[`LICENSE`](LICENSE) and [`data/README.md`](data/README.md).
