@@ -1,0 +1,187 @@
+---
+title: "Temperature and mortality in Chicago, 1987-2000: a DLNM and case-crossover demonstration"
+author: "Raymond Reuel Wayesu"
+date: "`r format(Sys.Date(), '%d %B %Y')`"
+output:
+  github_document:
+    toc: true
+    toc_depth: 2
+    html_preview: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+rd  <- function(n) readRDS(file.path("..", "outputs", paste0(n, ".rds")))
+fig <- function(f) knitr::include_graphics(file.path("..", "outputs", "figures", f))
+source(file.path("..", "R", "00_config.R"))
+dat <- rd("dat"); tab1 <- rd("tab1"); ts <- rd("fit_timeseries"); cc <- rd("fit_casecrossover")
+af  <- rd("attributable"); se <- rd("sensitivity"); it <- rd("interaction")
+x <- dat[[spec$exposure]]
+ci <- function(e, l, h, d = 2) sprintf(paste0("%.", d, "f (95%% CI %.", d, "f to %.", d, "f)"), e, l, h)
+rr <- function(tab, p) { r <- tab[tab$percentile == p, ]; ci(r$rr, r$lo, r$hi) }
+im <- function(m) { r <- it$table[it$table$measure == m, ]; ci(r$estimate, r$lo, r$hi) }
+afr <- function(k) { r <- af$af[k, ]; sprintf("%.2f%% (95%% eCI %.2f to %.2f)", r$af, r$af_lo, r$af_hi) }
+best <- se$sens[which.min(se$sens$qaic), ]
+```
+
+> **What this is.** A small, fully reproducible methods demonstration on an open
+> teaching dataset. It reproduces the standard environmental-epidemiology toolkit
+> for short-term temperature effects. It is **not** original research, makes no
+> new scientific claim, and uses no restricted, clinical or HeatShield user data.
+
+## 1. Question
+
+How does daily mean temperature relate to all-cause mortality over the following
+three weeks, where is the temperature of minimum mortality, how much of the death
+toll is attributable to cold and to heat, and does the answer depend on the study
+design or on defensible modelling choices?
+
+## 2. Data
+
+`chicagoNMMAPS`, distributed with the **dlnm** R package (GPL >= 2): `r format(nrow(dat), big.mark = ",")`
+consecutive days, `r min(dat$date)` to `r max(dat$date)`, `r format(sum(dat$death), big.mark = ",")`
+deaths. The data are loaded from the package at run time and are not stored in this repository.
+
+```{r}
+knitr::kable(tab1, caption = "Table 1. Daily series: missing values, mean and percentiles.")
+```
+
+## 3. Methods
+
+**Exposure-lag-response.** A distributed lag non-linear model (Gasparrini et al. 2010;
+Gasparrini 2011). The cross-basis combines a natural cubic spline of temperature (knots at the
+`r paste0(100 * spec$var_knots_p, "th", collapse = ", ")` percentiles) with a natural cubic
+spline over lags 0-`r spec$max_lag` days (`r spec$lag_nknots` knots equally spaced on the log scale).
+
+**Design 1: time series.** Quasi-Poisson regression with a natural spline of time
+(`r spec$df_per_year` df per year) and day of week.
+
+**Design 2: time-stratified case-crossover.** Conditional quasi-Poisson regression with strata of
+year x month x day of week (`r cc$n_strata` strata), which is equivalent to the conditional-logistic
+case-crossover analysis but allows overdispersion (Armstrong et al. 2014). The cross-basis is
+identical, so differences between designs reflect the design alone.
+
+**Minimum mortality temperature (MMT).** Minimum of the overall cumulative curve, searched between
+the `r 100 * spec$mmt_search_p[1]`st and `r 100 * spec$mmt_search_p[2]`th temperature percentiles; empirical CI
+from `r format(spec$n_sim, big.mark = ",")` Monte Carlo draws of the coefficients.
+
+**Attributable burden.** Backward-perspective attributable fraction and number
+(Gasparrini & Leone 2014) relative to the MMT, with empirical CIs. The estimator was written
+independently for this project and reproduces the authors' reference function `attrdl()` to
+machine precision (`R/99_validate_attributable.R`).
+
+**Sensitivity.** `r length(spec$sens_df)` x `r length(spec$sens_lag)` grid of df per year and maximum lag, all fitted
+to identical rows and compared by QAIC.
+
+**Interaction.** Warm season only (May-September). The heat DLNM (lag 0-`r spec$int_max_lag`) is allowed to
+differ between low- and high-ozone days; interaction is reported on the multiplicative scale and
+on the additive scale (RERI), with Monte Carlo CIs from the joint coefficient distribution.
+
+All modelling choices live in `R/00_config.R`. The main specification was fixed **a priori**,
+following common practice in multi-city studies (Gasparrini et al. 2015), not selected by QAIC.
+
+## 4. Results
+
+### 4.1 Overall association and the two designs
+
+The MMT was **`r sprintf("%.1f", ts$mmt$mmt)` C** (95% eCI `r sprintf("%.1f to %.1f", ts$mmt$ci[1], ts$mmt$ci[2])`),
+the `r round(100 * ts$mmt$pct)`th percentile of the temperature distribution. Overdispersion was modest
+(dispersion `r sprintf("%.2f", ts$dispersion)`). Relative to the MMT, the cumulative RR was
+`r rr(ts$rr, "cold_1")` at the 1st percentile and `r rr(ts$rr, "heat_99")` at the 99th.
+The case-crossover design gave `r rr(cc$rr, "cold_1")` and `r rr(cc$rr, "heat_99")`.
+
+```{r, out.width="85%"}
+fig("fig1_overall_two_designs.png")
+```
+
+```{r}
+knitr::kable(cc$compare, caption = "Table 2. Overall cumulative RR (95% CI) versus the time-series MMT, by design.")
+```
+
+### 4.2 Where and when the risk sits
+
+Cold effects are delayed and persistent; heat effects are immediate and followed by a period of
+RR below 1, the signature of short-term mortality displacement ("harvesting").
+
+```{r, out.width="60%"}
+fig("fig2_surface_3d.png")
+```
+
+```{r, out.width="85%"}
+fig("fig3_surface_contour.png")
+fig("fig4_lag_response.png")
+```
+
+### 4.3 Attributable burden
+
+Non-optimal temperature accounted for `r afr(1)` of deaths: `r afr(2)` from cold and `r afr(3)` from
+heat. Most of the burden came from *moderate* cold, not from extreme days.
+
+```{r}
+knitr::kable(af$af_print, caption = "Table 3. Attributable fraction (%) and deaths, with empirical 95% CIs.")
+```
+
+### 4.4 Sensitivity
+
+```{r, out.width="95%"}
+fig("fig5_sensitivity.png")
+```
+
+```{r}
+knitr::kable(se$sens_print, caption = "Table 4. Sensitivity grid. Delta-QAIC is relative to the best-fitting model.")
+```
+
+Two honest observations. First, QAIC was lowest at `r best$df_per_year` df per year and lag
+`r best$max_lag`, the edge of the df grid: QAIC keeps rewarding tighter seasonal control, which is
+why the main specification was fixed beforehand. Second, the cold estimate is stable across the
+grid (RR `r sprintf("%.2f to %.2f", min(se$sens$rr_cold), max(se$sens$rr_cold))`), whereas the heat
+estimate is not (RR `r sprintf("%.2f to %.2f", min(se$sens$rr_heat), max(se$sens$rr_heat))`), because the
+cumulative heat effect depends on how much of the post-heat deficit the lag window includes.
+
+### 4.5 Heat x ozone interaction (warm season)
+
+`r format(it$n_days, big.mark = ",")` warm-season days, `r it$n_high` with high ozone (lag 0-1 mean above
+`r sprintf("%.0f", it$o3_cut)` ppb). Heat = `r sprintf("%.1f", it$t_heat)` C, reference = `r sprintf("%.1f", it$t_ref)` C.
+The two heat surfaces differed (Wald chi-square `r sprintf("%.1f", it$wald)` on `r it$wald_df` df,
+p `r format.pval(it$p_wald, digits = 2, eps = 0.001)`). The heat RR was `r im("RR10_heat_lowO3")` on low-ozone days and
+`r im("RR_heat_within_highO3")` on high-ozone days. Multiplicative interaction: `r im("multiplicative_interaction")`;
+RERI: `r im("RERI")`.
+
+```{r, out.width="85%"}
+fig("fig6_heat_by_ozone.png")
+```
+
+```{r}
+knitr::kable(it$print, caption = "Table 5. Joint effects and interaction measures, with empirical 95% CIs.")
+```
+
+## 5. Limitations
+
+- One city, 1987-2000, all-cause mortality: a teaching dataset, not a current population.
+- Heat estimates lean heavily on the July 1995 heat wave (the series maximum, `r max(dat$death)` deaths
+  on `r dat$date[which.max(dat$death)]`), which also coincided with high ozone.
+- Exposure is a single city-wide daily mean (ecological); individual exposure is unmeasured.
+- Dry-bulb temperature only. Humidity-inclusive indices (WBGT, UTCI) may describe heat strain better;
+  that is what the HeatShield Agri forecasting layer computes, and comparing them is a natural next step.
+- No control for influenza epidemics or PM10 (`r sum(is.na(dat$pm10))` missing days); relative humidity not modelled.
+- The MMT is estimated with real uncertainty, and every RR and attributable fraction is conditional on it.
+- In this dataset ozone and PM10 are approximate reconstructions of the original series (see
+  `data/README.md`). The interaction analysis also dichotomises ozone and takes ozone status on the
+  day of death while heat is cumulated over lags. It illustrates the method; it is not a causal estimate.
+
+## 6. References
+
+1. Gasparrini A, Armstrong B, Kenward MG. Distributed lag non-linear models. *Stat Med* 2010;29:2224-34. doi:10.1002/sim.3940
+2. Gasparrini A. Distributed lag linear and non-linear models in R: the package dlnm. *J Stat Softw* 2011;43(8):1-20. doi:10.18637/jss.v043.i08
+3. Armstrong BG, Gasparrini A, Tobias A. Conditional Poisson models: a flexible alternative to conditional logistic case cross-over analysis. *BMC Med Res Methodol* 2014;14:122. doi:10.1186/1471-2288-14-122
+4. Gasparrini A, Leone M. Attributable risk from distributed lag models. *BMC Med Res Methodol* 2014;14:55. doi:10.1186/1471-2288-14-55
+5. Gasparrini A, Guo Y, Hashizume M, et al. Mortality risk attributable to high and low ambient temperature: a multicountry observational study. *Lancet* 2015;386:369-75. doi:10.1016/S0140-6736(14)62114-0
+6. Bhaskaran K, Gasparrini A, Hajat S, Smeeth L, Armstrong B. Time series regression studies in environmental epidemiology. *Int J Epidemiol* 2013;42:1187-95. doi:10.1093/ije/dyt092
+
+## 7. Session
+
+```{r}
+si <- sessionInfo()
+cat(si$R.version$version.string, "\n")
+for (p in c("dlnm", "gnm", "MASS", "tsModel")) cat(sprintf("%-8s %s\n", p, as.character(packageVersion(p))))
+```

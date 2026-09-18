@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this code, please cite it as below, and cite the dlnm package and the methods papers listed in README.md."
+title: "Temperature and mortality: a DLNM and case-crossover demonstration (HeatShield Agri)"
+type: software
+authors:
+  - family-names: Wayesu
+    given-names: Raymond Reuel
+    orcid: "https://orcid.org/0009-0007-7797-4339"
+repository-code: "https://github.com/rryesuafuga/heatshieldagri"
+references:
+  - type: article
+    title: "Distributed lag linear and non-linear models in R: the package dlnm"
+    authors:
+      - family-names: Gasparrini
+        given-names: Antonio
+    journal: "Journal of Statistical Software"
+    year: 2011
+    volume: 43
+    issue: 8
+    doi: "10.18637/jss.v043.i08"

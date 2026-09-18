@@ -1,0 +1,22 @@
+# R session
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# intermediate model objects (rebuilt by run_all.R; dat.rds contains the GPL dataset)
+outputs/*.rds
+
+# rmarkdown by-products
+report/*.html
+report/report_files/
+
+# renv library (commit renv.lock, not the library)
+renv/library/
+renv/staging/
+
+# belt and braces: restricted data formats never belong here
+*.dta
+*.sav
+*.DHS
+data/restricted/
