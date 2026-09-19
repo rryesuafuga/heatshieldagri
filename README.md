@@ -20,7 +20,8 @@ heatshieldagri/
 │   ├── heatshield-wasm/    # Rust WebAssembly core
 │   └── frontend/           # React + TypeScript UI
 ├── Android/                # Android Application (Kotlin)
-└── USSD/                   # USSD Application (Rust)
+├── USSD/                   # USSD Application (Rust)
+└── dlnm/                   # Epidemiological evidence layer (R)
 ```
 
 ## Quick Start
@@ -57,6 +58,28 @@ cargo run
 | Web | Rust, TypeScript | React 18, wasm-bindgen |
 | Android | Kotlin | Jetpack Compose, Hilt |
 | USSD | Rust | Actix-web, SQLx |
+| Research | R | dlnm, gnm |
+
+## Research: Exposure–Response Evidence
+
+The three channels above forecast heat *exposure*. [`dlnm/temperature-mortality-dlnm/`](dlnm/temperature-mortality-dlnm/)
+is the bridge from forecasting exposure to quantifying its health effect: a fully reproducible
+distributed lag non-linear model (DLNM) and time-stratified case-crossover analysis of temperature
+and mortality.
+
+It demonstrates the standard environmental-epidemiology toolkit — crossbasis specification,
+minimum-mortality temperature, attributable fraction, sensitivity analysis and effect modification —
+on an openly licensed teaching dataset. It is a methods demonstration, not original research, and
+uses **no** restricted, clinical, or HeatShield user data.
+
+**Results: [`dlnm/temperature-mortality-dlnm/report/report.md`](dlnm/temperature-mortality-dlnm/report/report.md)**
+
+```bash
+cd dlnm/temperature-mortality-dlnm
+Rscript run_all.R        # about one minute
+```
+
+Re-run on every change by [`.github/workflows/dlnm-demo.yml`](.github/workflows/dlnm-demo.yml).
 
 ## WBGT Risk Levels
 
