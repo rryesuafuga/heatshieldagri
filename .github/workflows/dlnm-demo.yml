@@ -6,11 +6,11 @@ name: dlnm-demo
 on:
   push:
     paths:
-      - "dlnm/research/temperature-mortality-dlnm/**"
+      - "dlnm/temperature-mortality-dlnm/**"
       - ".github/workflows/dlnm-demo.yml"
   pull_request:
     paths:
-      - "dlnm/research/temperature-mortality-dlnm/**"
+      - "dlnm/temperature-mortality-dlnm/**"
       - ".github/workflows/dlnm-demo.yml"
   workflow_dispatch:
 
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: dlnm/research/temperature-mortality-dlnm
+        working-directory: dlnm/temperature-mortality-dlnm
     steps:
       - uses: actions/checkout@v4
 
@@ -66,6 +66,6 @@ jobs:
         with:
           name: dlnm-demo-outputs
           path: |
-            dlnm/research/temperature-mortality-dlnm/report/report.md
-            dlnm/research/temperature-mortality-dlnm/outputs/figures
-            dlnm/research/temperature-mortality-dlnm/outputs/tables
+            dlnm/temperature-mortality-dlnm/report/report.md
+            dlnm/temperature-mortality-dlnm/outputs/figures
+            dlnm/temperature-mortality-dlnm/outputs/tables

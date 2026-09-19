@@ -58,7 +58,7 @@ install.packages(c("dlnm", "gnm", "tsModel", "rmarkdown"))
 ```
 
 ```bash
-cd dlnm/research/temperature-mortality-dlnm
+cd dlnm/temperature-mortality-dlnm
 Rscript run_all.R        # about one minute; writes outputs/ and report/report.md
 ```
 
@@ -80,7 +80,7 @@ Rscript R/99_validate_attributable.R
 ## Layout
 
 ```
-dlnm/research/temperature-mortality-dlnm/
+dlnm/temperature-mortality-dlnm/
 |-- README.md
 |-- LICENSE                    MIT (code only; data licences listed separately)
 |-- run_all.R                  one command reproduces everything
@@ -103,7 +103,7 @@ dlnm/research/temperature-mortality-dlnm/
     `-- report.md              rendered; GitHub displays it directly
 ```
 
-Continuous integration: [`.github/workflows/dlnm-demo.yml`](../../../.github/workflows/dlnm-demo.yml)
+Continuous integration: [`.github/workflows/dlnm-demo.yml`](../../.github/workflows/dlnm-demo.yml)
 at the **repository root** (GitHub Actions only discovers workflows there) re-runs the whole
 pipeline whenever this folder changes.
 
