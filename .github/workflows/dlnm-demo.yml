@@ -147,8 +147,10 @@ jobs:
         working-directory: site
         run: |
           npm install -g vercel@latest
-          echo "::group::Who does this token belong to?"
-          vercel whoami --token "$VERCEL_TOKEN"
+          # Diagnostics only. A team-scoped token has no user identity, so
+          # 'whoami' reports "User not found" for it - that is expected.
+          echo "::group::Token diagnostics (failures here are informational)"
+          vercel whoami --token "$VERCEL_TOKEN" || echo "(no user identity: token is probably team-scoped, which is fine)"
           vercel teams ls --token "$VERCEL_TOKEN" || true
           echo "::endgroup::"
           # Create the project if it is not there yet; harmless once it exists.
