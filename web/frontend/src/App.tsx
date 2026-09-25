@@ -13,6 +13,7 @@ import {
   BarChart3,
   Users,
   Info,
+  FlaskConical,
 } from 'lucide-react';
 
 // Pages
@@ -23,6 +24,7 @@ import Alerts from './pages/Alerts';
 import Schedule from './pages/Schedule';
 import Demo from './pages/Demo';
 import About from './pages/About';
+import Research from './pages/Research';
 
 // Navigation component
 function Navigation() {
@@ -36,6 +38,7 @@ function Navigation() {
     { path: '/schedule', label: 'Work Schedule', icon: BarChart3 },
     { path: '/alerts', label: 'Alerts', icon: Bell },
     { path: '/demo', label: 'Demo', icon: Users },
+    { path: '/research', label: 'Research', icon: FlaskConical },
     { path: '/about', label: 'About', icon: Info },
   ];
 
@@ -142,7 +145,52 @@ function Footer() {
   );
 }
 
+// Set VITE_SITE=research on a Vercel project (e.g. temperature-mortality-explained)
+// to deploy the same code as a standalone results site: only the Research page,
+// with its own header, at every path.
+const RESEARCH_ONLY = import.meta.env.VITE_SITE === 'research';
+
+function ResearchHeader() {
+  return (
+    <nav className="bg-white shadow-sm border-b border-gray-200">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-16">
+        <div className="flex items-center space-x-2">
+          <FlaskConical className="h-7 w-7 text-green-600" />
+          <div className="flex flex-col">
+            <span className="text-xl font-bold text-gray-900">Temperature &amp; mortality</span>
+            <span className="text-xs text-gray-500 -mt-1">explained</span>
+          </div>
+        </div>
+        <a
+          href="https://github.com/rryesuafuga/heatshieldagri/tree/main/dlnm/temperature-mortality-dlnm"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-gray-600 hover:text-green-700"
+        >
+          Code &amp; methods
+        </a>
+      </div>
+    </nav>
+  );
+}
+
 function App() {
+  if (RESEARCH_ONLY) {
+    return (
+      <BrowserRouter>
+        <div className="min-h-screen flex flex-col">
+          <ResearchHeader />
+          <main className="flex-1">
+            <Routes>
+              <Route path="*" element={<Research />} />
+            </Routes>
+          </main>
+          <Footer />
+        </div>
+      </BrowserRouter>
+    );
+  }
+
   return (
     <BrowserRouter>
       <div className="min-h-screen flex flex-col">
@@ -155,6 +203,7 @@ function App() {
             <Route path="/schedule" element={<Schedule />} />
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/demo" element={<Demo />} />
+            <Route path="/research" element={<Research />} />
             <Route path="/about" element={<About />} />
           </Routes>
         </main>

@@ -72,7 +72,9 @@ minimum-mortality temperature, attributable fraction, sensitivity analysis and e
 on an openly licensed teaching dataset. It is a methods demonstration, not original research, and
 uses **no** restricted, clinical, or HeatShield user data.
 
-**Results: [`dlnm/temperature-mortality-dlnm/report/report.md`](dlnm/temperature-mortality-dlnm/report/report.md)**
+**Results, in plain English:** [temperature-mortality-explained.vercel.app](https://temperature-mortality-explained.vercel.app)
+(also at `/research` on the main site).
+**Full report:** [`dlnm/temperature-mortality-dlnm/report/report.md`](dlnm/temperature-mortality-dlnm/report/report.md)
 
 ```bash
 cd dlnm/temperature-mortality-dlnm

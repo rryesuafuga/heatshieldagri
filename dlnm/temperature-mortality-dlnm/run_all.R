@@ -13,7 +13,8 @@ if (length(missing)) {
 }
 
 scripts <- c("01_data.R", "02_timeseries_dlnm.R", "03_casecrossover.R",
-             "04_attributable.R", "05_sensitivity.R", "06_interaction.R", "07_figures.R")
+             "04_attributable.R", "05_sensitivity.R", "06_interaction.R", "07_figures.R",
+             "08_export_web.R")
 t0 <- Sys.time()
 for (s in scripts) {
   message("\n=== ", s, " ===")

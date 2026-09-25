@@ -83,19 +83,23 @@ shiny::runApp("app")        # from the project root
 
 `Rscript app/app.R --check` builds every sentence without starting Shiny (CI runs this).
 
-**Hosted version.** CI also compiles the app to WebAssembly with
-[Shinylive](https://posit-dev.github.io/r-shinylive/), so it runs entirely in the browser with no
-R server. On every push to `main` it publishes the site twice, under the name
-**temperature-mortality-explained** (deliberately distinct from the HeatShield deployments):
+**On the web.** The same narrative is a page in the HeatShield React site,
+[`web/frontend/src/pages/Research.tsx`](../../web/frontend/src/pages/Research.tsx), which reads the
+tables, figures and two small JSON exports from `web/frontend/public/dlnm/`. No R runs in the
+browser; it loads instantly. It is served two ways from one codebase:
 
-- **GitHub Pages** — one-time setup: repository Settings → Pages → Source: *GitHub Actions*.
-- **Vercel** — as the project `temperature-mortality-explained`. The workflow links (and on first
-  run creates) the project itself, so the only thing needed is a `VERCEL_TOKEN` repository secret
-  scoped to the team; the job skips itself until that exists.
+- **heatshieldagri.vercel.app/research** — inside the main site.
+- **temperature-mortality-explained.vercel.app** — the page on its own, with its own header. This is
+  a second Vercel project importing the same repository (root directory `web/frontend`) with the
+  environment variable `VITE_SITE=research`.
 
-The same `site/` folder is uploaded as the workflow artifact `temperature-mortality-explained`
-and can be dropped onto any static host. First load fetches the R runtime (~20 MB); it is cached
-after that.
+CI keeps both current: after each pipeline run on `main` it copies the outputs into
+`web/frontend/public/dlnm/` and commits them if anything changed, and Vercel redeploys.
+`R/08_export_web.R` writes the JSON the slider and headline numbers need.
+
+The Shinylive build (`shinylive::export("app", "site")`) is still produced on every run and uploaded
+as the workflow artifact `temperature-mortality-explained`, for anyone who wants the R app itself
+as a static site.
 
 To host on shinyapps.io instead: `cp -r outputs app/` then `rsconnect::deployApp("app")`.
 

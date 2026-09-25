@@ -7,6 +7,9 @@
 # intermediate model objects (rebuilt by run_all.R; dat.rds contains the GPL dataset)
 outputs/*.rds
 
+# JSON for the web page: CI copies it into web/frontend/public/dlnm/ instead
+outputs/web/
+
 # rmarkdown by-products
 report/*.html
 report/report_files/
