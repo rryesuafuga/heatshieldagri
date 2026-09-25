@@ -218,7 +218,9 @@ if (CHECK) {
 
 # ---- Shiny --------------------------------------------------------------------
 library(shiny)
-addResourcePath("figs", fig_dir)
+# Figures are served from www/figs/ when bundled for Shinylive (see the CI
+# workflow); otherwise straight from outputs/figures/.
+if (!dir.exists(file.path(getwd(), "www", "figs"))) addResourcePath("figs", fig_dir)
 
 section_ui <- function(s, i) {
   tagList(

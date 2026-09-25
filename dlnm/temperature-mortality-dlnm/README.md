@@ -82,8 +82,15 @@ shiny::runApp("app")        # from the project root
 ```
 
 `Rscript app/app.R --check` builds every sentence without starting Shiny (CI runs this).
-To host it on shinyapps.io, copy the outputs into the app folder so they are bundled:
-`cp -r outputs app/` then `rsconnect::deployApp("app")`.
+
+**Hosted version.** CI also compiles the app to WebAssembly with
+[Shinylive](https://posit-dev.github.io/r-shinylive/), so it runs entirely in the browser with no
+R server, and publishes it to GitHub Pages on every push to `main` (one-time setup: repository
+Settings → Pages → Source: *GitHub Actions*). The same `site/` folder is uploaded as a workflow
+artifact and can be dropped onto any static host such as Vercel. First load fetches the R runtime
+(~20 MB); it is cached after that.
+
+To host on shinyapps.io instead: `cp -r outputs app/` then `rsconnect::deployApp("app")`.
 
 Optional check that the attributable-fraction code matches the method authors' reference
 function (downloaded to a temporary file, never stored here):
