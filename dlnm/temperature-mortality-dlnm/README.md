@@ -89,9 +89,9 @@ R server. On every push to `main` it publishes the site twice, under the name
 **temperature-mortality-explained** (deliberately distinct from the HeatShield deployments):
 
 - **GitHub Pages** — one-time setup: repository Settings → Pages → Source: *GitHub Actions*.
-- **Vercel** — as the project `temperature-mortality-explained`. The job skips itself until the
-  repository secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` exist (create the
-  project once with `vercel link`, then read the two IDs from `.vercel/project.json`).
+- **Vercel** — as the project `temperature-mortality-explained`. The workflow links (and on first
+  run creates) the project itself, so the only thing needed is a `VERCEL_TOKEN` repository secret
+  scoped to the team; the job skips itself until that exists.
 
 The same `site/` folder is uploaded as the workflow artifact `temperature-mortality-explained`
 and can be dropped onto any static host. First load fetches the R runtime (~20 MB); it is cached
