@@ -85,10 +85,17 @@ shiny::runApp("app")        # from the project root
 
 **Hosted version.** CI also compiles the app to WebAssembly with
 [Shinylive](https://posit-dev.github.io/r-shinylive/), so it runs entirely in the browser with no
-R server, and publishes it to GitHub Pages on every push to `main` (one-time setup: repository
-Settings → Pages → Source: *GitHub Actions*). The same `site/` folder is uploaded as a workflow
-artifact and can be dropped onto any static host such as Vercel. First load fetches the R runtime
-(~20 MB); it is cached after that.
+R server. On every push to `main` it publishes the site twice, under the name
+**temperature-mortality-explained** (deliberately distinct from the HeatShield deployments):
+
+- **GitHub Pages** — one-time setup: repository Settings → Pages → Source: *GitHub Actions*.
+- **Vercel** — as the project `temperature-mortality-explained`. The job skips itself until the
+  repository secrets `VERCEL_TOKEN`, `VERCEL_ORG_ID` and `VERCEL_PROJECT_ID` exist (create the
+  project once with `vercel link`, then read the two IDs from `.vercel/project.json`).
+
+The same `site/` folder is uploaded as the workflow artifact `temperature-mortality-explained`
+and can be dropped onto any static host. First load fetches the R runtime (~20 MB); it is cached
+after that.
 
 To host on shinyapps.io instead: `cp -r outputs app/` then `rsconnect::deployApp("app")`.
 

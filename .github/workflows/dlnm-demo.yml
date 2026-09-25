@@ -90,7 +90,7 @@ jobs:
       - name: Upload the static site
         uses: actions/upload-artifact@v4
         with:
-          name: shinylive-site
+          name: temperature-mortality-explained
           path: dlnm/temperature-mortality-dlnm/site
 
       - name: Upload the static site for GitHub Pages
@@ -121,3 +121,34 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Publishes the same static site to Vercel as the project
+  # "temperature-mortality-explained", on every push to main. Skips itself
+  # (no failure) unless all three secrets exist:
+  #   VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID
+  deploy-vercel:
+    if: github.ref == 'refs/heads/main'
+    needs: reproduce
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - name: Download the static site
+        if: env.VERCEL_TOKEN != '' && env.VERCEL_ORG_ID != '' && env.VERCEL_PROJECT_ID != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: temperature-mortality-explained
+          path: site
+
+      - name: Deploy to Vercel
+        if: env.VERCEL_TOKEN != '' && env.VERCEL_ORG_ID != '' && env.VERCEL_PROJECT_ID != ''
+        working-directory: site
+        run: |
+          npm install -g vercel@latest
+          vercel deploy --prod --yes --token "$VERCEL_TOKEN"
+
+      - name: Vercel secrets not set - skipped
+        if: env.VERCEL_TOKEN == '' || env.VERCEL_ORG_ID == '' || env.VERCEL_PROJECT_ID == ''
+        run: echo "Add VERCEL_TOKEN, VERCEL_ORG_ID and VERCEL_PROJECT_ID as repository secrets to enable this step."
