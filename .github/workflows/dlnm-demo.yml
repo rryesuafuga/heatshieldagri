@@ -142,11 +142,18 @@ jobs:
           name: temperature-mortality-explained
           path: site
 
-      - name: Link the Vercel project
+      - name: Create (first run) and link the Vercel project
         if: env.VERCEL_TOKEN != ''
         working-directory: site
         run: |
           npm install -g vercel@latest
+          echo "::group::Who does this token belong to?"
+          vercel whoami --token "$VERCEL_TOKEN"
+          vercel teams ls --token "$VERCEL_TOKEN" || true
+          echo "::endgroup::"
+          # Create the project if it is not there yet; harmless once it exists.
+          vercel project add "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE" --token "$VERCEL_TOKEN" \
+            || echo "Project already exists (or could not be created - see the deploy step)."
           vercel link --yes --project "$VERCEL_PROJECT" --scope "$VERCEL_SCOPE" --token "$VERCEL_TOKEN"
 
       - name: Deploy to Vercel
