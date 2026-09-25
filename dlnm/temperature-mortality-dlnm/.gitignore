@@ -18,6 +18,9 @@ renv/staging/
 # generated synthetic data (rebuilt by data-raw/make_synthetic_dhs.R)
 data-raw/synthetic/
 
+# copy of outputs made only for bundling the Shiny app (see app/app.R header)
+app/outputs/
+
 # belt and braces: restricted data formats never belong here
 *.dta
 *.sav

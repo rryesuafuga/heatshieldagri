@@ -60,6 +60,11 @@ jobs:
       - name: Generate the Tier-2 synthetic DHS stand-in
         run: Rscript data-raw/make_synthetic_dhs.R
 
+      # Builds every plain-English sentence from the saved outputs without
+      # starting Shiny, so the app's logic is verified even though the UI is not.
+      - name: Check the plain-English results app
+        run: Rscript app/app.R --check
+
       - name: Upload report, figures and tables
         if: always()
         uses: actions/upload-artifact@v4

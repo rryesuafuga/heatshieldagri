@@ -70,6 +70,21 @@ no lockfile present it installs the current CRAN releases instead. No lockfile i
 committed here, because a valid one has to be produced by `renv::snapshot()` on a
 working installation so that every version and hash is real.
 
+### The results in plain English
+
+A small Shiny app narrates every result on one page, reading the numbers from `outputs/` rather
+than repeating them by hand. It needs only the committed tables and figures; if `run_all.R` has
+been run, it also gains a slider that reads off the risk at any temperature.
+
+```r
+install.packages("shiny")
+shiny::runApp("app")        # from the project root
+```
+
+`Rscript app/app.R --check` builds every sentence without starting Shiny (CI runs this).
+To host it on shinyapps.io, copy the outputs into the app folder so they are bundled:
+`cp -r outputs app/` then `rsconnect::deployApp("app")`.
+
 Optional check that the attributable-fraction code matches the method authors' reference
 function (downloaded to a temporary file, never stored here):
 
@@ -95,6 +110,8 @@ dlnm/temperature-mortality-dlnm/
 |-- data/README.md             provenance and licence; no data files
 |-- data-raw/
 |   `-- make_synthetic_dhs.R   Tier 2: synthetic DHS stand-in (git-ignored output)
+|-- app/
+|   `-- app.R                  Shiny: the results in plain English
 |-- outputs/
 |   |-- figures/               committed (the report links to them)
 |   `-- tables/                committed CSVs
